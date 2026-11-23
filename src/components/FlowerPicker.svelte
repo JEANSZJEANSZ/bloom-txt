@@ -2,7 +2,8 @@
 	import { FLOWERS } from '../lib/flowers';
 	import FlowerPreview from './FlowerPreview.svelte';
 	import { COLOR_ORDER, PETAL } from '../lib/palette';
-	import type { ColorId, FlowerId, Placement } from '../lib/types';
+	import { DEFAULT_STYLE } from '../lib/look';
+	import type { ColorId, FlowerId, Placement, RenderStyle } from '../lib/types';
 	import { MAX_FLOWERS } from '../lib/types';
 
 	let {
@@ -12,6 +13,7 @@
 		onmove,
 		onsurprise,
 		onclear,
+		renderStyle = DEFAULT_STYLE,
 	}: {
 		flowers: Placement[];
 		onadd: (id: FlowerId, color: ColorId) => void;
@@ -19,6 +21,7 @@
 		onmove: (from: number, to: number) => void;
 		onsurprise: () => void;
 		onclear: () => void;
+		renderStyle?: RenderStyle;
 	} = $props();
 
 	let selected: FlowerId = $state('rose');
@@ -57,7 +60,7 @@
 	</ul>
 
 	<div class="studio">
-		<FlowerPreview id={selected} {color} label={`${def.name} in ${PETAL[color].name}`} />
+		<FlowerPreview id={selected} {color} {renderStyle} label={`${def.name} in ${PETAL[color].name}`} />
 		<div class="studio-side">
 			<p class="current">{def.name}</p>
 			<p class="blurb">{def.blurb}</p>

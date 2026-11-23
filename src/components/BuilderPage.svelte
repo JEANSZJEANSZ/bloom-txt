@@ -3,28 +3,51 @@
 	import { copyPlainText, downloadPng } from '../lib/export';
 	import { giftHash, giftUrl } from '../lib/share';
 	import { surpriseBouquet, surpriseCritters } from '../lib/surprise';
-	import { LIMITS, type ColorId, type CritterId, type CritterPlacement, type FlowerId, type Gift, type Letter, type Placement } from '../lib/types';
+	import { clampDetail, DEFAULT_DETAIL, DEFAULT_STYLE, isRenderStyle, styleOf } from '../lib/look';
+	import { LIMITS, type ColorId, type CritterId, type CritterPlacement, type FlowerId, type Gift, type Letter, type Placement, type RenderStyle } from '../lib/types';
 	import { normalizeCritters } from '../lib/critters';
 	import FlowerPicker from './FlowerPicker.svelte';
 	import CritterPicker from './CritterPicker.svelte';
 	import LetterEditor from './LetterEditor.svelte';
 	import BouquetStage, { type StageHandle } from './BouquetStage.svelte';
+	import StageControls from './StageControls.svelte';
 
 	const DRAFT_KEY = 'bloom-txt:draft';
 
-	function loadDraft(): { flowers: Placement[]; letter: Letter; critters: CritterPlacement[] } {
+	function loadDraft(): {
+		flowers: Placement[];
+		letter: Letter;
+		critters: CritterPlacement[];
+		style: RenderStyle;
+		detail: number;
+	} {
+		const fallback = {
+			flowers: [...DEFAULT_FLOWERS],
+			letter: { ...EMPTY_LETTER },
+			critters: [...DEFAULT_CRITTERS],
+			style: DEFAULT_STYLE,
+			detail: DEFAULT_DETAIL,
+		};
 		try {
 			const raw = localStorage.getItem(DRAFT_KEY);
-			if (!raw) return { flowers: [...DEFAULT_FLOWERS], letter: { ...EMPTY_LETTER }, critters: [...DEFAULT_CRITTERS] };
-			const d = JSON.parse(raw) as { flowers?: Placement[]; letter?: Letter; critters?: unknown };
+			if (!raw) return fallback;
+			const d = JSON.parse(raw) as {
+				flowers?: Placement[];
+				letter?: Letter;
+				critters?: unknown;
+				style?: unknown;
+				detail?: unknown;
+			};
 			if (!Array.isArray(d.flowers)) throw new Error('bad draft');
 			return {
 				flowers: d.flowers.slice(0, LIMITS.flowers),
 				letter: { ...EMPTY_LETTER, ...d.letter },
 				critters: normalizeCritters(d.critters, LIMITS.critters),
+				style: isRenderStyle(d.style) ? d.style : DEFAULT_STYLE,
+				detail: clampDetail(d.detail, DEFAULT_DETAIL),
 			};
 		} catch {
-			return { flowers: [...DEFAULT_FLOWERS], letter: { ...EMPTY_LETTER }, critters: [...DEFAULT_CRITTERS] };
+			return fallback;
 		}
 	}
 
@@ -32,11 +55,20 @@
 	let flowers: Placement[] = $state(draft.flowers);
 	let letter: Letter = $state(draft.letter);
 	let critters: CritterPlacement[] = $state(draft.critters);
+	let style: RenderStyle = $state(draft.style);
+	let detail: number = $state(draft.detail);
 
 	let playing = $state(false);
 	let status = $state('');
 
-	const gift = $derived<Gift>({ v: 1, flowers, letter, critters });
+	const gift = $derived<Gift>({
+		v: 1,
+		flowers,
+		letter,
+		critters,
+		...(styleOf(style) === 'retro' ? { style: 'retro' as const } : {}),
+		...(clampDetail(detail) !== DEFAULT_DETAIL ? { detail: clampDetail(detail) } : {}),
+	});
 	const hint = $derived(
 		playing
 			? 'Growing from the roots — drag to spin, tap or press space to skip ahead'
@@ -48,7 +80,7 @@
 	let stage = $state<StageHandle | undefined>(undefined);
 
 	$effect(() => {
-		const snapshot = JSON.stringify({ flowers, letter, critters });
+		const snapshot = JSON.stringify({ flowers, letter, critters, style, detail: clampDetail(detail) });
 		try {
 			localStorage.setItem(DRAFT_KEY, snapshot);
 		} catch {
@@ -152,7 +184,7 @@
 	async function savePng() {
 		const grid = currentGrid();
 		if (!grid) return;
-		await downloadPng(grid, letter.note, 'bloom.txt.png');
+		await downloadPng(grid, letter.note, 'bloom.txt.png', { plain: styleOf(style) === 'retro' });
 		status = 'Saved a PNG of the bouquet.';
 	}
 
@@ -169,10 +201,13 @@
 
 	<div class="layout">
 		<section class="stage">
+			<StageControls bind:style bind:detail />
 			<BouquetStage
 				bind:handle={stage}
 				{flowers}
 				{critters}
+				renderStyle={style}
+				{detail}
 				note={letter.note}
 				{hint}
 				{ongrown}
@@ -193,6 +228,7 @@
 				onmove={move}
 				onsurprise={surprise}
 				onclear={clear}
+				renderStyle={style}
 			/>
 			<CritterPicker {critters} onadd={addCritter} onremove={removeCritter} />
 			<LetterEditor bind:letter />

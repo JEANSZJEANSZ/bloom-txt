@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { copyPlainText, downloadPng } from '../lib/export';
+	import { DEFAULT_DETAIL, DEFAULT_STYLE, styleOf } from '../lib/look';
 	import { decodeGift } from '../lib/share';
 	import Envelope from './Envelope.svelte';
 	import LetterCard from './LetterCard.svelte';
@@ -98,7 +99,7 @@
 		if (!gift) return;
 		const grid = stage?.getGrid();
 		if (!grid) return;
-		await downloadPng(grid, gift.letter.note, 'bloom.txt.png');
+		await downloadPng(grid, gift.letter.note, 'bloom.txt.png', { plain: styleOf(gift.style) === 'retro' });
 		status = 'Saved a PNG of the bouquet.';
 	}
 
@@ -144,6 +145,8 @@
 						bind:handle={stage}
 						{flowers}
 						critters={gift.critters}
+						renderStyle={gift.style ?? DEFAULT_STYLE}
+						detail={gift.detail ?? DEFAULT_DETAIL}
 						autoGrow={true}
 						note={gift.letter.note}
 						{ongrown}

@@ -2,6 +2,7 @@ import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from
 import { isCritterId } from './critters';
 import { isFlowerId } from './flowers';
 import { COLOR_ORDER } from './palette';
+import { clampDetail, DEFAULT_DETAIL } from './look';
 import type { ColorId, CritterId, Gift, GiftPayload, OccasionId, Placement } from './types';
 import { LIMITS } from './types';
 
@@ -39,6 +40,9 @@ export function toPayload(gift: Gift): GiftPayload {
 		o: isOccasion(gift.letter.occasion) ? gift.letter.occasion : 'because',
 	};
 	if (critters.length) payload.c = critters;
+	if (gift.style === 'retro') payload.r = 'retro';
+	const detail = clampDetail(gift.detail, DEFAULT_DETAIL);
+	if (detail !== DEFAULT_DETAIL) payload.d = detail;
 	return payload;
 }
 
@@ -55,7 +59,7 @@ export function fromPayload(p: GiftPayload): Gift {
 		.filter((id): id is CritterId => isCritterId(id))
 		.map((id) => ({ id }));
 
-	return {
+	const gift: Gift = {
 		v: 1,
 		flowers,
 		letter: {
@@ -67,6 +71,12 @@ export function fromPayload(p: GiftPayload): Gift {
 		},
 		critters,
 	};
+	if (p.r === 'retro') gift.style = 'retro';
+	if (p.d !== undefined) {
+		const detail = clampDetail(p.d, DEFAULT_DETAIL);
+		if (detail !== DEFAULT_DETAIL) gift.detail = detail;
+	}
+	return gift;
 }
 
 export function encodeGift(gift: Gift): string {

@@ -1,4 +1,4 @@
-import { drawGridFast, measureGrid, waitForFonts } from './draw';
+import { drawGrid, drawGridFast, measureGrid, waitForFonts } from './draw';
 import { gridToPlainText } from './render';
 import type { Grid } from './types';
 
@@ -29,8 +29,13 @@ export async function copyPlainText(grid: Grid, note?: string): Promise<boolean>
 	}
 }
 
-export async function downloadPng(grid: Grid, note?: string, filename = 'bloom.txt.png'): Promise<void> {
-	const blob = await bouquetToPngBlob(grid, note);
+export type PngOptions = {
+	/** Use classic fillText glyphs (retro). Default is the shaded 3D blit. */
+	plain?: boolean;
+};
+
+export async function downloadPng(grid: Grid, note?: string, filename = 'bloom.txt.png', opts?: PngOptions): Promise<void> {
+	const blob = await bouquetToPngBlob(grid, note, opts);
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement('a');
 	a.href = url;
@@ -39,7 +44,7 @@ export async function downloadPng(grid: Grid, note?: string, filename = 'bloom.t
 	URL.revokeObjectURL(url);
 }
 
-export async function bouquetToPngBlob(grid: Grid, note?: string): Promise<Blob> {
+export async function bouquetToPngBlob(grid: Grid, note?: string, opts?: PngOptions): Promise<Blob> {
 	await waitForFonts();
 	const cols = grid[0]?.length ?? 0;
 	const rows = grid.length;
@@ -49,7 +54,8 @@ export async function bouquetToPngBlob(grid: Grid, note?: string): Promise<Blob>
 	const metrics = measureGrid(ctx, cols, rows, Math.max(720, Math.min(2400, cols * 7 + 72)), note ?? '');
 	canvas.width = metrics.width;
 	canvas.height = metrics.height;
-	drawGridFast(ctx, grid, note ?? '', metrics, 1, 1);
+	if (opts?.plain) drawGrid(ctx, grid, note ?? '', metrics, 1);
+	else drawGridFast(ctx, grid, note ?? '', metrics, 1, 1);
 	return await new Promise<Blob>((resolve, reject) => {
 		canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not make a PNG'))), 'image/png');
 	});

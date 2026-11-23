@@ -39,7 +39,7 @@ export function measureGrid(
 	ctx.font = `${fontSize}px ${FONT_STACK}`;
 	let charW = ctx.measureText('M').width || fontSize * 0.6;
 	fontSize = fontSize * (target / Math.max(1, charW * cols));
-	fontSize = Math.max(3.5, Math.min(16, fontSize));
+	fontSize = Math.max(3.5, Math.min(28, fontSize));
 	ctx.font = `${fontSize}px ${FONT_STACK}`;
 	charW = ctx.measureText('M').width || fontSize * 0.6;
 	const lineHeight = fontSize * 1.05;

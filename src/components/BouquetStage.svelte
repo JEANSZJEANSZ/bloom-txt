@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { drawGridFast, measureGrid, waitForFonts, type DrawMetrics } from '../lib/draw';
-	import { AUTO_YAW_SPEED, GROW_DURATION, GROW_SKIP, preferredGrid, prefersReducedMotion, SLOW_YAW_SPEED } from '../lib/motion';
-	import { renderBouquet } from '../lib/render';
-	import type { Grid, Placement } from '../lib/types';
+	import { drawGrid, drawGridFast, measureGrid, waitForFonts, type DrawMetrics } from '../lib/draw';
+	import { AUTO_YAW_SPEED, GROW_DURATION, GROW_SKIP, gridForDetail, prefersReducedMotion, SLOW_YAW_SPEED } from '../lib/motion';
+	import { DEFAULT_DETAIL, DEFAULT_STYLE, styleOf } from '../lib/look';
+	import { renderBouquet as renderBouquet3d } from '../lib/render';
+	import { renderBouquet as renderBouquetRetro } from '../lib/renderRetro';
+	import type { Grid, Placement, RenderStyle } from '../lib/types';
 	import { emptyGrid } from '../lib/stems';
 
 	export type StageHandle = {
@@ -23,6 +25,8 @@
 		ongrown,
 		onadvance,
 		handle = $bindable(),
+		renderStyle = DEFAULT_STYLE,
+		detail = DEFAULT_DETAIL,
 	}: {
 		flowers: Placement[];
 		critters?: import('../lib/types').CritterPlacement[];
@@ -34,7 +38,12 @@
 		ongrown?: () => void;
 		onadvance?: () => void;
 		handle?: StageHandle;
+		renderStyle?: RenderStyle;
+		/** 0 (chunky, ~60 cols) to 100 (finest grid for this viewport). */
+		detail?: number;
 	} = $props();
+
+	const look = $derived(styleOf(renderStyle));
 
 	const reduced = prefersReducedMotion();
 	// Capture the mount-time prop once: the gift page starts from the roots,
@@ -64,7 +73,8 @@
 	let width = 0;
 	let metrics: DrawMetrics | null = null;
 	let flicker = 1;
-	const colsRows = { ...preferredGrid() };
+	const colsRows = { cols: 0, rows: 0 };
+	let sizedFor = { cols: 0, rows: 0, style: DEFAULT_STYLE };
 
 	function finishGrow() {
 		growth = 1;
@@ -109,11 +119,13 @@
 	function sizeCanvas() {
 		if (!canvas || !host) return;
 		const cssW = Math.max(160, host.clientWidth);
-		if (cssW === width && metrics) return;
+		const next = gridForDetail(detail, window.innerWidth, window.innerHeight, look);
+		const sameGrid = next.cols === sizedFor.cols && next.rows === sizedFor.rows && look === sizedFor.style;
+		if (cssW === width && metrics && sameGrid) return;
 		width = cssW;
-		const next = preferredGrid(window.innerWidth, window.innerHeight);
 		colsRows.cols = next.cols;
 		colsRows.rows = next.rows;
+		sizedFor = { cols: next.cols, rows: next.rows, style: look };
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
 		metrics = measureGrid(ctx, colsRows.cols, colsRows.rows, cssW, note);
@@ -160,7 +172,8 @@
 
 		const intro =
 			growth < 1 ? 0 : reduced ? 1 : grownAt < 0 ? 0 : Math.max(0, Math.min(1, (time - grownAt) / 0.85));
-		const rendered = renderBouquet({
+		const render = look === 'retro' ? renderBouquetRetro : renderBouquet3d;
+		const rendered = render({
 			flowers,
 			critters,
 			critterIntro: intro,
@@ -175,7 +188,9 @@
 			rows: colsRows.rows,
 		});
 		lastGrid = rendered.grid;
-		drawGridFast(ctx, rendered.grid, note, metrics, flicker, Math.min(2, window.devicePixelRatio || 1));
+		const dpr = Math.min(2, window.devicePixelRatio || 1);
+		if (look === 'retro') drawGrid(ctx, rendered.grid, note, metrics, flicker);
+		else drawGridFast(ctx, rendered.grid, note, metrics, flicker, dpr);
 	}
 
 	function onPointerDown(e: PointerEvent) {

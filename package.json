@@ -25,10 +25,11 @@
     "svelte-check": "^4.7.7",
     "typescript": "~6.0.3",
     "vite": "^8.3.6",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
   },
   "dependencies": {
     "lz-string": "^1.5.0"
   },
-  "description": "Bloom.txt \u2014 assemble an ASCII wildflower bouquet and send it as a gift link."
+  "description": "Bloom.txt — assemble an ASCII wildflower bouquet and send it as a gift link."
 }

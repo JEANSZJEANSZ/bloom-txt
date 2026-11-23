@@ -82,12 +82,19 @@ export type Letter = {
 	occasion: OccasionId;
 };
 
+/** '3d' is the realistic shaded renderer; 'retro' is the earlier sprite-style ASCII look. */
+export type RenderStyle = '3d' | 'retro';
+
 export type Gift = {
 	v: 1;
 	flowers: Placement[];
 	letter: Letter;
 	/** Optional on older gifts; treat missing as []. */
 	critters: CritterPlacement[];
+	/** Optional on older gifts; treat missing as '3d'. */
+	style?: RenderStyle;
+	/** Grid density, 0 (chunky) to 100 (finest). Optional; treat missing as 100. */
+	detail?: number;
 };
 
 export type GiftPayload = {
@@ -100,4 +107,8 @@ export type GiftPayload = {
 	o: OccasionId;
 	/** Optional so older share links keep working. */
 	c?: CritterId[];
+	/** 'retro' when the sender chose the sprite renderer; omit for 3D. */
+	r?: 'retro';
+	/** 0–100 grid density; omit for the finest (current 3D) default. */
+	d?: number;
 };

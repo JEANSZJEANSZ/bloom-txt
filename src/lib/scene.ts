@@ -163,8 +163,22 @@ function addRoots(points: ScenePoint[], rng: () => number) {
 function placeTips(flowers: Placement[], rng: () => number): FlowerTip3[] {
 	const n = flowers.length;
 	if (n === 0) return [];
+	if (n === 1) {
+		const f = flowers[0];
+		const height = 1.45 + (rng() - 0.5) * 0.04;
+		return [
+			{
+				x: 0,
+				y: height,
+				z: 0.05,
+				angle: 0,
+				id: f.id,
+				color: f.color,
+			},
+		];
+	}
 	return flowers.map((f, i) => {
-		const t = n === 1 ? 0.5 : i / n;
+		const t = i / n;
 		const angle = t * Math.PI * 2 + (rng() - 0.5) * 0.18;
 		const compact =
 			f.id === 'lavender' ||
@@ -250,7 +264,7 @@ export function buildScene(flowers: Placement[], fill = 64): BouquetScene {
 		return { points, tips, seed };
 	}
 
-	const fillers = Math.max(36, Math.min(fill, 28 + tips.length * 4));
+	const fillers = Math.max(0, Math.min(fill, 28 + tips.length * 4));
 	for (let i = 0; i < fillers; i++) {
 		const angle = (i / fillers) * Math.PI * 2 + (rng() - 0.5) * 0.2;
 		const radial = 0.35 + rng() * 0.78;
