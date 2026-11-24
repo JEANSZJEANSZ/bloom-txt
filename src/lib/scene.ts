@@ -1,5 +1,6 @@
 import { colorsFor, FLOWER_BY_ID, roleFor } from './flowers';
 import { INKS, STEM } from './palette';
+import { DEFAULT_RIBBON, RIBBON, type RibbonId } from './ribbon';
 import { mulberry32, seedFromFlowers } from './rng';
 import type { ColorId, FlowerId, Placement } from './types';
 
@@ -21,7 +22,7 @@ export type ScenePoint = {
 	phase: number;
 	/** 0 at the base, 1 at the tip; negative for roots spreading downward. */
 	along: number;
-	/** -2 roots, -1 ribbon/soil tuft, 0+ a stem (flower stems use their flower index). */
+	/** -2 unused (legacy roots), -1 ribbon, 0+ a stem (flower stems use their flower index). */
 	stemId: number;
 };
 
@@ -110,54 +111,14 @@ function addStem(
 	}
 }
 
-/** Little roots, soil tuft, and a tied ribbon at the gathered waist. */
-function addRoots(points: ScenePoint[], rng: () => number) {
-	const chars = ['~', ',', "'", '`', '/', '\\', '.', "'"];
-	const n = 14;
-	for (let i = 0; i < n; i++) {
-		const angle = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.35;
-		const len = 0.22 + rng() * 0.22;
-		const steps = 5 + Math.floor(rng() * 3);
-		for (let k = 1; k <= steps; k++) {
-			const t = k / steps;
-			const curl = Math.sin(t * 5 + i) * 0.05;
-			const spread = len * t * 1.15 + curl;
-			const x = Math.sin(angle) * spread;
-			const z = Math.cos(angle) * spread;
-			// Stay just under the waist so the tuft isn't clipped off the grid.
-			const y = -t * len * (0.45 + rng() * 0.2);
-			const ch = chars[(Math.floor(t * (chars.length - 1)) + i) % chars.length];
-			const color = t > 0.55 ? STEM.dim : STEM.mid;
-			push(points, x, y, z, ch, color, 'stem', {
-				dx: x,
-				dy: -1,
-				dz: z,
-				along: -t,
-				stemId: -2,
-				phase: t + i,
-			});
-		}
-	}
-	for (let i = 0; i < 7; i++) {
-		const a = (i / 7) * Math.PI * 2 + rng() * 0.2;
-		const r = 0.04 + rng() * 0.08;
-		push(
-			points,
-			Math.sin(a) * r,
-			-0.02 - rng() * 0.04,
-			Math.cos(a) * r,
-			i % 2 ? '.' : "'",
-			INKS.brown,
-			'stem',
-			{ dy: -1, along: -0.12, stemId: -2, phase: i },
-		);
-	}
-	const ribbon = INKS.blush;
-	push(points, 0.09, 0.02, 0.02, '~', ribbon, 'leaf', { along: 0, stemId: -1, phase: 0 });
-	push(points, -0.09, 0.02, -0.02, '~', ribbon, 'leaf', { along: 0, stemId: -1, phase: 1 });
-	push(points, 0.05, 0, 0.05, '>', INKS.heart, 'leaf', { along: 0, stemId: -1, phase: 2 });
-	push(points, -0.05, 0, -0.05, '<', INKS.heart, 'leaf', { along: 0, stemId: -1, phase: 3 });
-	push(points, 0, 0.01, 0.07, '&', ribbon, 'leaf', { along: 0, stemId: -1, phase: 4 });
+/** A tied ribbon at the gathered waist. (No roots.) */
+function addRibbon(points: ScenePoint[], ribbon: RibbonId = DEFAULT_RIBBON) {
+	const tone = RIBBON[ribbon] ?? RIBBON[DEFAULT_RIBBON];
+	push(points, 0.09, 0.02, 0.02, '~', tone.mid, 'leaf', { along: 0, stemId: -1, phase: 0 });
+	push(points, -0.09, 0.02, -0.02, '~', tone.mid, 'leaf', { along: 0, stemId: -1, phase: 1 });
+	push(points, 0.05, 0, 0.05, '>', tone.dim, 'leaf', { along: 0, stemId: -1, phase: 2 });
+	push(points, -0.05, 0, -0.05, '<', tone.dim, 'leaf', { along: 0, stemId: -1, phase: 3 });
+	push(points, 0, 0.01, 0.07, '&', tone.bright, 'leaf', { along: 0, stemId: -1, phase: 4 });
 }
 
 function placeTips(flowers: Placement[], rng: () => number): FlowerTip3[] {
@@ -247,13 +208,13 @@ function stampFlower(
 	}
 }
 
-export function buildScene(flowers: Placement[], fill = 64): BouquetScene {
+export function buildScene(flowers: Placement[], fill = 64, ribbon: RibbonId = DEFAULT_RIBBON): BouquetScene {
 	const seed = seedFromFlowers(flowers);
 	const rng = mulberry32(seed);
 	const points: ScenePoint[] = [];
 	const tips = placeTips(flowers, rng);
 
-	addRoots(points, rng);
+	addRibbon(points, ribbon);
 	// The gathered base of the bunch.
 	push(points, 0, 0, 0, 'v', STEM.bright, 'stem', { dy: 1, phase: 0, along: 0, stemId: -1 });
 	push(points, 0, -0.06, 0, '.', STEM.dim, 'stem', { dy: 1, phase: 1, along: -0.08, stemId: -1 });
@@ -284,7 +245,17 @@ export function buildScene(flowers: Placement[], fill = 64): BouquetScene {
 
 	for (let i = 0; i < tips.length; i++) {
 		const tip = tips[i];
-		addStem(points, tip.x, tip.y, tip.z, 14, true, rng, i);
+		addStem(points, tip.x, tip.y, tip.z, 22, true, rng, i);
+		// A tiny calyx just under the sprite; flowers are stamped after and cover anything on the face.
+		{
+			const ux = tip.x, uy = tip.y, uz = tip.z;
+			const len = Math.hypot(ux, uy, uz) || 1;
+			const bx = tip.x - (ux / len) * 0.04;
+			const by = tip.y - (uy / len) * 0.04;
+			const bz = tip.z - (uz / len) * 0.04;
+			push(points, bx, by, bz, 'v', STEM.mid, 'stem', { dx: ux, dy: uy, dz: uz, along: 0.96, stemId: i });
+			push(points, tip.x, tip.y, tip.z, 'v', STEM.bright, 'stem', { dx: ux, dy: uy, dz: uz, along: 1, stemId: i });
+		}
 	}
 
 	flowers.forEach((f, i) => {

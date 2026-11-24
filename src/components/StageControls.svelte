@@ -67,7 +67,7 @@
 		padding: 0.7rem 0.9rem;
 		background: var(--card);
 		border: 1px solid var(--line);
-		border-radius: 16px;
+		border-radius: var(--radius);
 		box-shadow: var(--shadow);
 	}
 	.row {

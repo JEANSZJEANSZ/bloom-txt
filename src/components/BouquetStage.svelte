@@ -3,6 +3,7 @@
 	import { drawGrid, drawGridFast, measureGrid, waitForFonts, type DrawMetrics } from '../lib/draw';
 	import { AUTO_YAW_SPEED, GROW_DURATION, GROW_SKIP, gridForDetail, prefersReducedMotion, SLOW_YAW_SPEED } from '../lib/motion';
 	import { DEFAULT_DETAIL, DEFAULT_STYLE, styleOf } from '../lib/look';
+	import { DEFAULT_RIBBON, type RibbonId } from '../lib/ribbon';
 	import { renderBouquet as renderBouquet3d } from '../lib/render';
 	import { renderBouquet as renderBouquetRetro } from '../lib/renderRetro';
 	import type { Grid, Placement, RenderStyle } from '../lib/types';
@@ -27,13 +28,19 @@
 		handle = $bindable(),
 		renderStyle = DEFAULT_STYLE,
 		detail = DEFAULT_DETAIL,
+		dropActive = false,
+		dropAllowed = true,
+		dropName = 'flower',
+		locked = false,
+		ribbon = DEFAULT_RIBBON,
+		skin = 'terminal',
 	}: {
 		flowers: Placement[];
 		critters?: import('../lib/types').CritterPlacement[];
 		note?: string;
 		hint?: string;
 		title?: string;
-		/** Start from roots and grow organically (gift page after the envelope opens). */
+		/** Start from the stems and grow organically (gift page after the envelope opens). */
 		autoGrow?: boolean;
 		ongrown?: () => void;
 		onadvance?: () => void;
@@ -41,12 +48,21 @@
 		renderStyle?: RenderStyle;
 		/** 0 (chunky, ~60 cols) to 100 (finest grid for this viewport). */
 		detail?: number;
+		/** Highlight the stage as a drop target while a flower is being dragged. */
+		dropActive?: boolean;
+		dropAllowed?: boolean;
+		dropName?: string;
+		/** Ignore drag-to-spin / tap-to-skip while a flower drag is in progress. */
+		locked?: boolean;
+		ribbon?: RibbonId;
+		/** Terminal chrome in the studio; a frameless glow on the gift page. */
+		skin?: 'terminal' | 'ether';
 	} = $props();
 
 	const look = $derived(styleOf(renderStyle));
 
 	const reduced = prefersReducedMotion();
-	// Capture the mount-time prop once: the gift page starts from the roots,
+	// Capture the mount-time prop once: the gift page starts from the stems,
 	// later replays go through handle.replay().
 	// svelte-ignore state_referenced_locally
 	const startFromRoots = Boolean(autoGrow) && !reduced;
@@ -139,6 +155,7 @@
 
 	function frame(ts: number) {
 		raf = requestAnimationFrame(frame);
+		const t0 = performance.now();
 		if (!canvas) return;
 		const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0.016;
 		lastTs = ts;
@@ -160,11 +177,9 @@
 			}
 		}
 
-		if (!reduced) {
-			flicker = 0.93 + 0.07 * (0.5 + 0.5 * Math.sin(time * 17.3) * Math.sin(time * 3.1));
-		} else {
-			flicker = 1;
-		}
+		// Steady brightness: the old CRT-style alpha pulse read as the whole
+		// bouquet flashing.
+		flicker = 1;
 
 		sizeCanvas();
 		const ctx = canvas.getContext('2d');
@@ -186,14 +201,21 @@
 			particles: !reduced,
 			cols: colsRows.cols,
 			rows: colsRows.rows,
+			ribbon,
 		});
 		lastGrid = rendered.grid;
 		const dpr = Math.min(2, window.devicePixelRatio || 1);
 		if (look === 'retro') drawGrid(ctx, rendered.grid, note, metrics, flicker);
 		else drawGridFast(ctx, rendered.grid, note, metrics, flicker, dpr);
+		const sink = typeof window !== 'undefined' ? (window as unknown as { __bloomStagePerf?: { times: number[]; stamps: number[] } }).__bloomStagePerf : undefined;
+		if (sink) {
+			sink.times.push(performance.now() - t0);
+			sink.stamps.push(t0);
+		}
 	}
 
 	function onPointerDown(e: PointerEvent) {
+		if (locked) return;
 		if (e.button !== 0) return;
 		dragging = true;
 		dragMoved = false;
@@ -261,11 +283,13 @@
 
 <svelte:window onkeydown={onKey} />
 
-<figure class="panel">
+<figure class="panel" class:ether={skin === 'ether'}>
+	{#if skin !== 'ether'}
 	<div class="chrome">
 		<span class="dots" aria-hidden="true"><i class="r"></i><i class="y"></i><i class="g"></i></span>
 		<span class="title">{title}</span>
 	</div>
+	{/if}
 	<div
 		class="body"
 		class:grabbing={dragging}
@@ -279,10 +303,15 @@
 	>
 		<canvas bind:this={canvas}></canvas>
 		<div class="scan" aria-hidden="true"></div>
+		{#if dropActive}
+			<div class="dropzone" class:ok={dropAllowed} class:no={!dropAllowed} aria-hidden="true">
+				<span>{dropAllowed ? `Drop to add a ${dropName}` : 'The vase is full'}</span>
+			</div>
+		{/if}
 	</div>
 	<figcaption>
 		{#if isGrowing}
-			<p class="hint">Growing from the roots — drag to spin, tap or press space to skip ahead</p>
+			<p class="hint">Growing from the stems — drag to spin, tap or press space to skip ahead</p>
 		{:else if hint}
 			<p class="hint">{hint}</p>
 		{/if}
@@ -408,4 +437,72 @@
 		border-color: #3ee66b;
 		color: #b8ffc8;
 	}
+	.dropzone {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		padding-top: 1.15rem;
+		pointer-events: none;
+		background: rgba(196, 92, 122, 0.18);
+		border: 3px dashed #ff8ad4;
+		border-radius: 0 0 12px 12px;
+		z-index: 3;
+	}
+	.dropzone.ok {
+		background: rgba(196, 92, 122, 0.22);
+		box-shadow: inset 0 0 0 1px rgba(255, 138, 212, 0.5);
+	}
+	.dropzone.no {
+		background: rgba(40, 16, 20, 0.4);
+		border-color: #8a4a5a;
+	}
+	.dropzone span {
+		font-family: var(--sans);
+		font-weight: 800;
+		font-size: 0.95rem;
+		letter-spacing: 0.04em;
+		color: #fff6fb;
+		background: rgba(20, 10, 16, 0.72);
+		border-radius: 999px;
+		padding: 0.45rem 0.95rem;
+		box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+	}
+.panel.ether {
+		background: #0b0e14;
+		border: 1px solid #1a1f2a;
+		border-radius: 18px;
+		box-shadow:
+			0 0 80px 10px rgba(255, 220, 170, 0.1),
+			0 24px 50px -28px rgba(0, 0, 0, 0.7);
+		position: relative;
+		overflow: hidden;
+	}
+	.panel.ether .body {
+		background: #0b0e14;
+		padding: 8px 4px 6px;
+		position: relative;
+		z-index: 1;
+	}
+	.panel.ether figcaption {
+		background: #0b0e14;
+		color: rgba(246, 239, 228, 0.7);
+	}
+	.panel.ether .spin {
+		border-color: rgba(246, 239, 228, 0.22);
+		background: #161b26;
+		color: var(--moon, #f6efe4);
+	}
+	.panel.ether .spin:hover {
+		border-color: rgba(246, 239, 228, 0.45);
+	}
+	.panel.ether .spin[aria-pressed='true'] {
+		border-color: #e8c988;
+		color: #ffe9a8;
+	}
+	.panel.ether .scan {
+		display: none;
+	}
+
 </style>

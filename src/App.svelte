@@ -13,17 +13,27 @@
 	const title = $derived(
 		route.page === 'gift' ? 'A bloom, for you' : 'Bloom.txt — handmade ASCII wildflowers',
 	);
+
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		document.body.dataset.scene = route.page === 'gift' ? 'night' : 'paper';
+	});
 </script>
 
 <svelte:window onhashchange={onHash} />
 
 <svelte:head>
 	<title>{title}</title>
+	{#if route.page === 'gift'}
+		<meta name="theme-color" content="#07080f" />
+	{:else}
+		<meta name="theme-color" content="#07080f" />
+	{/if}
 </svelte:head>
 
 <a class="skip" href="#main">Skip to the bouquet</a>
 
-<div class="shell">
+<div class="shell" data-page={route.page}>
 	<main id="main">
 		{#if route.page === 'gift'}
 			<RevealPage token={route.token} />
@@ -31,11 +41,13 @@
 			<BuilderPage />
 		{/if}
 	</main>
-	<footer>
-		<p>
-			Bloom.txt keeps the whole gift in the link — no accounts, no server, just a bouquet that can travel.
-		</p>
-	</footer>
+	{#if route.page !== 'gift'}
+		<footer>
+			<p>
+				Bloom.txt keeps the whole gift in the link — no accounts, no server, just a bouquet that can travel.
+			</p>
+		</footer>
+	{/if}
 </div>
 
 <style>
@@ -57,12 +69,16 @@
 		display: flex;
 		flex-direction: column;
 	}
+	.shell[data-page='gift'] {
+		background: var(--night);
+		color: var(--moon);
+	}
 	main {
 		flex: 1;
 	}
 	footer {
 		text-align: center;
-		padding: 0 1rem 2.2rem;
+		padding: 0 1rem 2.6rem;
 		color: var(--ink-soft);
 		font-size: 0.85rem;
 	}

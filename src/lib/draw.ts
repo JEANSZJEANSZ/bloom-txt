@@ -255,19 +255,24 @@ export function drawGridFast(
 		const row = grid[y];
 		const y0 = Math.round((padY + y * lineHeight) * d);
 		if (y0 >= H) break;
+		const ySpan = Math.min(chh, Math.round((padY + (y + 1) * lineHeight) * d) - y0);
 		for (let x = 0; x < cols; x++) {
 			const cell = row[x];
 			if (!cell) continue;
 			const x0 = Math.round((padX + x * charW) * d);
 			if (x0 >= W) continue;
+			// Exact cell span: neighbours share an edge but never overlap, so
+			// the surface fill is blended once per pixel (overlapping 1px
+			// columns used to double-blend into shifting seams).
+			const xSpan = Math.min(cw, Math.round((padX + (x + 1) * charW) * d) - x0);
 			const rgb = cell.rgb ?? colorInt(cell.color);
 			const r = (rgb >> 16) & 255;
 			const g = (rgb >> 8) & 255;
 			const b = rgb & 255;
 			const fill = FILL_KINDS.has(cell.kind);
 			const mask = glyphMask(a, cell.ch);
-			const yMax = Math.min(chh, H - y0);
-			const xMax = Math.min(cw, W - x0);
+			const yMax = Math.min(ySpan, H - y0);
+			const xMax = Math.min(xSpan, W - x0);
 			for (let yy = 0; yy < yMax; yy++) {
 				let o = (y0 + yy) * W + x0;
 				let mo = yy * cw;

@@ -1,12 +1,13 @@
 /**
  * Pre-realistic sprite-style bouquet renderer — the "Retro" look.
- * Flowers are handmade ASCII sprites placed in 3D, with rotation, grow-from-roots,
+ * Flowers are handmade ASCII sprites placed in 3D, with rotation, grow-from-stems,
  * critters, and auto-fit framing. Kept as an alternate mode beside the shaded 3D renderer.
  */
 import { crawlAlong, critterFrames, flapFrame, flyerPose } from './critters';
 import { frameCount } from './flowers';
 import { shadeHex, STEM, TERMINAL_BG } from './palette';
 import { buildParticles, buildScene, type BouquetScene, type Particle, type ScenePoint } from './scene';
+import { DEFAULT_RIBBON, ribbonOf, type RibbonId } from './ribbon';
 import type { CritterPlacement, Grid, Letter, Placement } from './types';
 import { COLS, ROWS } from './types';
 import { emptyGrid } from './stems';
@@ -25,7 +26,7 @@ export type RenderOptions = {
 	/** Show every flower in its final frame, ignoring tick. */
 	complete?: boolean;
 	/**
-	 * Continuous 0–1 growth from roots to open blooms.
+	 * Continuous 0–1 growth from stems to open blooms.
 	 * When set, stems grow from the base, leaves unfurl, and flowers open after their stem arrives.
 	 */
 	growth?: number;
@@ -50,6 +51,8 @@ export type RenderOptions = {
 	critterIntro?: number;
 	/** Wing flaps, crawl, and trails. Default true. */
 	animateCritters?: boolean;
+	/** Tied bow colour. Default is the classic pink. */
+	ribbon?: RibbonId;
 };
 
 export type RenderResult = {
@@ -128,11 +131,12 @@ export function fitCamera(
 	return { scale, originX, originY, camZ: CAM_Z, aspect: CAM_ASPECT };
 }
 
-function sceneFor(flowers: Placement[], fill: number): BouquetScene {
-	const key = `${fill}|${flowers.map((f) => `${f.id}:${f.color}`).join(',')}`;
+function sceneFor(flowers: Placement[], fill: number, ribbon: RibbonId = DEFAULT_RIBBON): BouquetScene {
+	const bow = ribbonOf(ribbon);
+	const key = `${fill}|${bow}|${flowers.map((f) => `${f.id}:${f.color}`).join(',')}`;
 	let scene = sceneCache.get(key);
 	if (!scene) {
-		scene = buildScene(flowers, fill);
+		scene = buildScene(flowers, fill, bow);
 		if (sceneCache.size > 24) sceneCache.clear();
 		sceneCache.set(key, scene);
 	}
@@ -156,9 +160,9 @@ export function easeOutCubic(t: number): number {
 
 /** When a stem starts and finishes growing along the 0–1 growth clock. */
 export function stemGrowWindow(stemId: number, mainCount: number, isMain: boolean): { start: number; end: number } {
-	const start0 = 0.1;
-	const span = 0.2;
-	const dur = isMain ? 0.4 : 0.34;
+	const start0 = 0;
+	const span = 0.18;
+	const dur = isMain ? 0.38 : 0.32;
 	if (isMain) {
 		const t = mainCount <= 1 ? 0 : stemId / (mainCount - 1);
 		return { start: start0 + t * span, end: start0 + t * span + dur };
@@ -185,12 +189,9 @@ function flowerFrameFromGrowth(flowerIndex: number, plan: BloomPlan, growth: num
 
 function pointVisible(p: ScenePoint, growth: number | undefined, mainCount: number): boolean {
 	if (growth === undefined) return true;
-	if (p.stemId === -2) {
-		const rootProg = easeOutCubic(clamp01((growth - 0.02) / 0.14));
-		return -p.along <= rootProg + 0.001;
-	}
+	if (p.stemId === -2) return false;
 	if (p.stemId === -1) {
-		return growth >= 0.05;
+		return growth >= 0.04;
 	}
 	if (p.flowerIndex >= 0) return true;
 	const isMain = p.stemId >= 0 && p.stemId < mainCount;
@@ -506,7 +507,7 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 	const rows = opts.rows ?? ROWS;
 	const flowers = opts.flowers;
 	const fill = opts.fill ?? (opts.focus ? 0 : cols < 80 ? 44 : 68);
-	const scene = sceneFor(flowers, fill);
+	const scene = sceneFor(flowers, fill, ribbonOf(opts.ribbon));
 	const plan = planBloom(flowers);
 	const total = totalTicksFor(flowers);
 	const growth = opts.complete ? 1 : opts.growth;
@@ -723,3 +724,82 @@ export function gridToPlainText(grid: Grid, letter?: Pick<Letter, 'note'>): stri
 }
 
 export { TERMINAL_BG };
+
+
+export type StemJoint = {
+	id: import('./types').FlowerId;
+	index: number;
+	hx: number;
+	hy: number;
+	sx: number;
+	sy: number;
+	gap: number;
+	visible: boolean;
+	connected: boolean;
+	faceFlower: number;
+	faceStem: number;
+};
+
+export function measureStemJoints(opts: RenderOptions): { joints: StemJoint[]; result: RenderResult } {
+	const result = renderBouquet(opts);
+	const cols = opts.cols ?? COLS;
+	const rows = opts.rows ?? ROWS;
+	const fill = opts.fill ?? (opts.focus ? 0 : cols < 80 ? 44 : 68);
+	const scene = sceneFor(opts.flowers, fill, ribbonOf(opts.ribbon));
+	const yaw = opts.yaw ?? 0;
+	const cam = fitCamera(
+		opts.focus
+			? scene.points.filter((p) => p.kind === 'flower' || (p.kind === 'stem' && p.stemId >= 0 && p.along >= 0.82))
+			: scene.points,
+		cols,
+		rows,
+		opts.focus ? 0 : opts.critters?.length ? 0.16 : 0,
+		!!opts.focus,
+	);
+	const projectH = (x: number, y: number, z: number) => {
+		const r = rotateY(x, y, z, yaw);
+		return project(r.x, r.y, r.z, cam);
+	};
+	const countKind = (x: number, y: number, dx0: number, dx1: number, dy0: number, dy1: number, want: string[]) => {
+		let n = 0;
+		for (let dy = dy0; dy <= dy1; dy++) {
+			for (let dx = dx0; dx <= dx1; dx++) {
+				const xi = Math.round(x + dx);
+				const yi = Math.round(y + dy);
+				if (yi < 0 || yi >= rows || xi < 0 || xi >= cols) continue;
+				const k = result.grid[yi][xi]?.kind;
+				if (k && want.includes(k)) n++;
+			}
+		}
+		return n;
+	};
+	const kindsNear = (x: number, y: number, rad: number, want: string[]) =>
+		countKind(x, y, -rad, rad, -rad, rad, want);
+	const joints: StemJoint[] = [];
+	for (let i = 0; i < scene.tips.length; i++) {
+		const tip = scene.tips[i];
+		const head = projectH(tip.x, tip.y, tip.z);
+		if (!head) continue;
+		const mid = projectH(tip.x, tip.y, tip.z);
+		const sx = mid?.cx ?? head.cx;
+		const sy = mid?.cy ?? head.cy;
+		const gap = mid ? Math.hypot(mid.cx - head.cx, mid.cy - head.cy) : 0;
+		const under = countKind(head.cx, head.cy, -4, 4, 0, 6, ['stem', 'leaf']);
+		const faceFlower = countKind(head.cx, head.cy, -3, 3, -6, -2, ['flower']);
+		const faceStem = countKind(head.cx, head.cy, -3, 3, -6, -2, ['stem']);
+		joints.push({
+			id: tip.id,
+			index: i,
+			hx: head.cx,
+			hy: head.cy,
+			sx,
+			sy,
+			gap,
+			visible: kindsNear(head.cx, head.cy, 6, ['flower']) > 2,
+			connected: under > 0,
+			faceFlower,
+			faceStem,
+		});
+	}
+	return { joints, result };
+}

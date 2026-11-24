@@ -82,9 +82,9 @@ https://your-domain.example/?open=1#/gift/<token>
 
 ## Using the site
 
-1. **Builder** — pick from a dozen flower varieties, choose a color, and place them on the bunch. Stems fan automatically. The bouquet spins in 3D (drag to turn it by hand, or pause rotation) and is framed so the whole bunch, roots to blossom, stays in the panel. A Style switch next to the stage picks **3D** (the realistic shaded renderer) or **Retro** (the earlier chunky sprite-style ASCII look). A Detail slider changes how many ASCII cells the stage uses, from large readable glyphs up to the finest grid. Both travel with the gift link and the local draft; older links stay on 3D at full detail. “Surprise me” grows a random bouquet. Replay bloom grows the bunch from a little root tuft and ribbon, stems first, then leaves, then each flower opening at its tip. You can also invite ladybugs, bees, and butterflies — they come along in the gift link.
+1. **Builder** — pick from a dozen flower varieties, choose a color, and place them on the bunch. Stems fan automatically. The bouquet spins in 3D (drag to turn it by hand, or pause rotation) and is framed so the whole bunch, stems to blossom, stays in the panel. A Style switch next to the stage picks **3D** (the realistic shaded renderer) or **Retro** (the earlier chunky sprite-style ASCII look). A Detail slider changes how many ASCII cells the stage uses, from large readable glyphs up to the finest grid. Both travel with the gift link and the local draft; older links stay on 3D at full detail. “Surprise me” grows a random bouquet. Replay bloom grows the bunch from the stems and a tied ribbon, then leaves, then each flower opening at its tip. You can also invite ladybugs, bees, and butterflies — they come along in the gift link.
 2. **Letter** — To, From, a short line that prints under the bouquet, a longer message, and a card style (love, birthday, thank you, surprise, just because).
-3. **Share** — copy the gift link. The recipient sees a sealed envelope, taps to open it, and watches the bouquet grow from the roots as it turns (or taps / presses space to skip ahead). Then the letter types itself in. They can also copy the bouquet as plain text or download a PNG.
+3. **Share** — copy the gift link. The recipient sees a sealed envelope, taps to open it, and watches the bouquet grow from the stems as it turns (or taps / presses space to skip ahead). Then the letter types itself in. They can also copy the bouquet as plain text or download a PNG.
 
 A draft of the builder is saved in `localStorage` on that browser so a refresh does not lose your work. The gift itself still travels only in the link.
 
@@ -93,7 +93,7 @@ A draft of the builder is saved in `localStorage` on that browser so a refresh d
 - **URL length.** Very long letters make longer links. The letter is capped (72 characters for the under-bouquet line, 600 for the message, 16 flowers). Most browsers handle the compressed result comfortably, but some chat apps truncate unusually long URLs — keep the note short if you run into that.
 - **Link previews.** Because the gift lives in the hash and there is no server, Slack/iMessage/etc. cannot generate a unique image of that bouquet. They will show the generic Bloom.txt description.
 - **Private by obscurity.** Anyone with the exact link can open the gift. Do not put secrets in the letter. There is no password or expiry.
-- **Motion.** The bouquet grows from the roots in about four seconds, then auto-rotates and sways. `prefers-reduced-motion` skips the grow and turns rotation down to a still (or very gentle) pose; you can still press Rotate or drag it yourself.
+- **Motion.** The bouquet grows from the stems in about four seconds, then auto-rotates and sways. `prefers-reduced-motion` skips the grow and turns rotation down to a still (or very gentle) pose; you can still press Rotate or drag it yourself.
 - **Fonts in the PNG.** The download uses IBM Plex Mono. If a browser has not finished loading the font, the PNG may fall back to another monospace face.
 - **No accounts, no deploy step required of recipients.** They just open the link.
 

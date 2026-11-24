@@ -1,9 +1,10 @@
 :root {
-	--paper: #f4ece3;
-	--paper-2: #ead9d0;
-	--ink: #3a2a28;
+	--paper: #f3ece3;
+	--paper-2: #e8d8ce;
+	--ink: #2f2422;
 	--ink-soft: #6a5550;
 	--rose: #c45c7a;
+	--rose-deep: #9e3f5d;
 	--leaf: #3a7a4a;
 	--card: #fffaf5;
 	--line: #e2d3c8;
@@ -11,6 +12,20 @@
 	--serif: 'Fraunces', 'Times New Roman', serif;
 	--sans: 'Nunito', system-ui, sans-serif;
 	--mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', monospace;
+
+	--night: #07080f;
+	--night-2: #10131c;
+	--moon: #f6efe4;
+	--moon-soft: rgba(246, 239, 228, 0.72);
+	--gold: #e8c988;
+	--blush: #ffd0e0;
+	--mist: #c9e4ff;
+
+	--radius: 1.15rem;
+	--radius-sm: 0.8rem;
+	--ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+	--ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
+	--space: 1.1rem;
 
 	color: var(--ink);
 	background: var(--paper);
@@ -40,6 +55,12 @@ body {
 		radial-gradient(800px 500px at 50% 120%, rgba(170, 200, 150, 0.2), transparent 55%),
 		var(--paper);
 	color: var(--ink);
+	transition: background 0.6s var(--ease-soft), color 0.4s ease;
+}
+
+body[data-scene='night'] {
+	background: var(--night);
+	color: var(--moon);
 }
 
 #app {
@@ -52,14 +73,82 @@ a {
 
 button,
 input,
-textarea {
+textarea,
+select {
 	font-family: inherit;
 }
 
+.btn,
+.btn-primary,
+.btn-ghost {
+	border-radius: 999px;
+	font: inherit;
+	font-weight: 700;
+	padding: 0.55rem 1.05rem;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.35rem;
+	text-decoration: none;
+	transition:
+		transform 0.35s var(--ease-out),
+		box-shadow 0.35s var(--ease-out),
+		background 0.25s ease,
+		border-color 0.25s ease,
+		filter 0.25s ease;
+}
+
+.btn-primary {
+	border: 0;
+	background: var(--rose);
+	color: #fffaf5;
+	box-shadow: 0 10px 24px -12px rgba(196, 92, 122, 0.85);
+}
+
+.btn-primary:hover {
+	filter: brightness(1.06);
+	transform: translateY(-1px);
+}
+
+.btn-ghost {
+	border: 1px solid var(--line);
+	background: var(--card);
+	color: var(--ink);
+}
+
+.btn-ghost:hover:not(:disabled) {
+	border-color: #d3b8ae;
+	transform: translateY(-1px);
+}
+
+.btn-primary:disabled,
+.btn-ghost:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+	transform: none;
+	filter: none;
+}
+
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible,
+.btn:focus-visible {
+	outline: 2px solid var(--rose);
+	outline-offset: 3px;
+}
+
+.panel-card {
+	background: var(--card);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow);
+	padding: 0.95rem 1rem 1.05rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
-	*,
-	*::before,
-	*::after {
+	html:not([data-motion='allow']) *,
+	html:not([data-motion='allow']) *::before,
+	html:not([data-motion='allow']) *::after {
 		animation-duration: 0.01ms !important;
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;

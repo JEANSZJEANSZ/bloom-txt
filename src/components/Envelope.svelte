@@ -6,17 +6,19 @@
 		letter,
 		open = false,
 		onclick,
+		tone = 'paper',
 	}: {
 		letter: Letter;
 		open?: boolean;
 		onclick?: () => void;
+		tone?: 'paper' | 'night';
 	} = $props();
 
 	const occasion = $derived(OCCASION_BY_ID[letter.occasion]);
 	const addressed = $derived(letter.to.trim() ? `For ${letter.to.trim()}` : 'A little something for you');
 </script>
 
-<button class="wrap" class:open {onclick} type="button" aria-label="Open the envelope">
+<button class="wrap" class:open class:night={tone === 'night'} {onclick} type="button" aria-label="Open your letter">
 	<span class="eyebrow">a letter arrived</span>
 	<span class="address">{addressed}</span>
 	<span class="scene">
@@ -39,10 +41,10 @@
 				<span class="sheet"></span>
 			</span>
 			<span class="flap"></span>
-			<span class="seal">{occasion.seal}</span>
+			<span class="seal"><span class="wax">{occasion.seal}</span><span class="crack" aria-hidden="true"></span></span>
 		</span>
 	</span>
-	<span class="cta">Tap to open</span>
+	<span class="cta">Open your letter</span>
 	{#if letter.from.trim()}
 		<span class="from">from {letter.from.trim()}</span>
 	{/if}
@@ -237,12 +239,83 @@
 		color: var(--ink-soft);
 		font-size: 0.95rem;
 	}
-	.open .cta {
+	.open .cta,
+	.open .address,
+	.open .eyebrow {
 		opacity: 0;
+	}
+	.open .address,
+	.open .eyebrow,
+	.open .cta {
+		transition: opacity 0.35s ease;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.envelope {
 			animation: none;
 		}
 	}
+
+	.wrap {
+		animation: floatin 1.15s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+	}
+	@keyframes floatin {
+		from {
+			opacity: 0;
+			transform: translateY(36px) scale(0.94);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	.night .eyebrow,
+	.night .cta {
+		color: var(--gold, #e8c988);
+	}
+	.night .address {
+		color: var(--moon, #f6efe4);
+		text-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+	}
+	.night .from {
+		color: var(--moon-soft, rgba(246, 239, 228, 0.72));
+	}
+	.night .envelope {
+		filter: drop-shadow(0 24px 36px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 24px rgba(255, 220, 170, 0.18));
+	}
+	.seal .wax {
+		display: grid;
+		place-items: center;
+		width: 100%;
+		height: 100%;
+	}
+	.crack {
+		position: absolute;
+		inset: 18%;
+		border-radius: 50%;
+		background:
+			linear-gradient(115deg, transparent 46%, rgba(255, 236, 200, 0.85) 49%, transparent 52%),
+			linear-gradient(70deg, transparent 48%, rgba(80, 10, 20, 0.55) 50%, transparent 52%);
+		opacity: 0;
+		transform: scale(0.6);
+		pointer-events: none;
+	}
+	.open .crack {
+		opacity: 1;
+		animation: split 0.45s ease-out forwards;
+	}
+	@keyframes split {
+		0% { opacity: 1; transform: scale(0.7); }
+		100% { opacity: 0; transform: scale(1.4); }
+	}
+	.open .seal {
+		transform: translate(52px, -72px) rotate(56deg) scale(0.62);
+		opacity: 0;
+		filter: brightness(1.2);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.wrap {
+			animation: none;
+		}
+	}
+
 </style>

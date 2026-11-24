@@ -1,4 +1,5 @@
-import { bez, bezTangent, buildScene3, densityFor, KIND_FLOWER, KIND_LEAF, KIND_RIBBON, KIND_ROOT, KIND_STEM, type Scene3 } from './bouquet3d';
+import { bez, bezTangent, buildScene3, densityFor, KIND_FLOWER, KIND_LEAF, KIND_RIBBON, KIND_STEM, type Scene3 } from './bouquet3d';
+import { DEFAULT_RIBBON, ribbonOf, type RibbonId } from './ribbon';
 import { crawlAlong, critterFrames, flapFrame, flyerPose } from './critters';
 import { OPEN_KEYS, SLOT_ANTHER, SLOT_FILAMENT } from './flora3d';
 import { frameCount } from './flowers';
@@ -24,7 +25,7 @@ export type RenderOptions = {
 	tick?: number;
 	/** Show the finished bouquet, ignoring tick/growth. */
 	complete?: boolean;
-	/** Continuous 0–1 growth: roots → stems → buds → bloom. */
+	/** Continuous 0–1 growth: stems → buds → bloom. */
 	growth?: number;
 	twinkle?: number;
 	cols?: number;
@@ -45,6 +46,12 @@ export type RenderOptions = {
 	/** 0 = hidden, 1 = fully present. Bees fly in as this rises after the grow. */
 	critterIntro?: number;
 	animateCritters?: boolean;
+	/** Tied bow colour. Default is the classic pink. */
+	ribbon?: RibbonId;
+	/** Test hook: draw only these layers ('flowers' = petals only, for depth checks). */
+	_layers?: 'all' | 'flowers' | 'green';
+	/** Test hook: copy the final per-cell depth into the result. */
+	_depth?: boolean;
 };
 
 export type RenderResult = {
@@ -53,6 +60,10 @@ export type RenderResult = {
 	plan: BloomPlan[];
 	totalTicks: number;
 	done: boolean;
+	/** Present when `opts._depth` is set: view-space depth per cell (or -Infinity). */
+	depth?: Float32Array;
+	/** Max flower-splat depth per cell, before gap fill (test hook). */
+	flowerDepth?: Float32Array;
 };
 
 export function planBloom(flowers: Placement[]): BloomPlan[] {
@@ -169,8 +180,8 @@ function easeInOut(t: number): number {
 /** When stem `i` of `n` starts and finishes growing on the 0–1 clock. */
 export function stemGrowWindow(i: number, n: number, _isMain = true): { start: number; end: number } {
 	const t = n <= 1 ? 0 : i / (n - 1);
-	const start = 0.08 + t * 0.14;
-	return { start, end: start + 0.32 };
+	const start = t * 0.12;
+	return { start, end: start + 0.36 };
 }
 
 function stemProgress(i: number, n: number, g: number): number {
@@ -191,19 +202,20 @@ const sceneCache = new Map<string, Scene3>();
 const camCache = new Map<string, Camera>();
 const particleCache = new Map<number, Particle[]>();
 
-const sceneKeyByArray = new WeakMap<Placement[], { sp: number; key: string }>();
+const sceneKeyByArray = new WeakMap<Placement[], { sp: number; ribbon: RibbonId; key: string }>();
 
-function sceneFor(flowers: Placement[], sp: number): { scene: Scene3; key: string } {
+function sceneFor(flowers: Placement[], sp: number, ribbon: RibbonId = DEFAULT_RIBBON): { scene: Scene3; key: string } {
+	const bow = ribbonOf(ribbon);
 	const memo = sceneKeyByArray.get(flowers);
 	let key: string;
-	if (memo && memo.sp === sp) key = memo.key;
+	if (memo && memo.sp === sp && memo.ribbon === bow) key = memo.key;
 	else {
-		key = `${sp}|${flowers.map((f) => `${f.id}:${f.color}`).join(',')}`;
-		sceneKeyByArray.set(flowers, { sp, key });
+		key = `${sp}|${bow}|${flowers.map((f) => `${f.id}:${f.color}`).join(',')}`;
+		sceneKeyByArray.set(flowers, { sp, ribbon: bow, key });
 	}
 	let scene = sceneCache.get(key);
 	if (!scene) {
-		scene = buildScene3(flowers, sp);
+		scene = buildScene3(flowers, sp, bow);
 		if (sceneCache.size > 16) sceneCache.clear();
 		sceneCache.set(key, scene);
 	}
@@ -219,6 +231,8 @@ function sceneFor(flowers: Placement[], sp: number): { scene: Scene3; key: strin
  */
 const RAMP = '.:-=+*#%@';
 const SHADE_Q = 40;
+/** Depth band (world units) treated as one surface when resolving a cell. */
+const SURF_EPS = 0.015;
 const colorCache = new Map<number, string>();
 const rgbCache = new Map<number, number>();
 
@@ -226,6 +240,7 @@ function shadedRgb(rgb: number, q: number): number {
 	const key = rgb * 64 + q;
 	let v = rgbCache.get(key);
 	if (v !== undefined) return v;
+	if (rgbCache.size > 60000) rgbCache.clear();
 	const f = q / SHADE_Q;
 	const ch = (c: number) => {
 		// Gamma lifts mid-tones so shaded yellows stay golden, not olive.
@@ -242,6 +257,7 @@ function shadeRgbStr(rgb: number, q: number): string {
 	const key = rgb * 64 + q;
 	let s = colorCache.get(key);
 	if (s) return s;
+	if (colorCache.size > 60000) colorCache.clear();
 	s = `#${shadedRgb(rgb, q).toString(16).padStart(6, '0')}`;
 	colorCache.set(key, s);
 	return s;
@@ -274,9 +290,28 @@ type Buffers = {
 	rgb: Int32Array;
 	kind: Uint8Array;
 	id: Uint16Array;
+	/** Per-cell sample weight and colour sums for the front surface. */
+	cnt: Float32Array;
+	/** Packed channel sums: r·2^28 + g·2^14 + b (exact in a double). */
+	srgb: Float64Array;
 	size: number;
 };
 let buffers: Buffers | null = null;
+
+type Snap = { z: Float32Array; id: Uint16Array; kind: Uint8Array; lum: Float32Array; rgb: Int32Array; tone: Float32Array };
+let snapBuf: Snap | null = null;
+function getSnap(n: number): Snap {
+	if (!snapBuf || snapBuf.z.length !== n)
+		snapBuf = {
+			z: new Float32Array(n),
+			id: new Uint16Array(n),
+			kind: new Uint8Array(n),
+			lum: new Float32Array(n),
+			rgb: new Int32Array(n),
+			tone: new Float32Array(n),
+		};
+	return snapBuf;
+}
 
 function getBuffers(n: number): Buffers {
 	if (!buffers || buffers.size !== n) {
@@ -288,6 +323,8 @@ function getBuffers(n: number): Buffers {
 			rgb: new Int32Array(n),
 			kind: new Uint8Array(n),
 			id: new Uint16Array(n),
+			cnt: new Float32Array(n),
+			srgb: new Float64Array(n),
 			size: n,
 		};
 	}
@@ -468,7 +505,7 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 	const rows = opts.rows ?? ROWS;
 	const flowers = opts.flowers;
 	const sp = opts.fill && opts.fill < 0.1 ? opts.fill : densityFor(cols) * (opts.focus ? 0.46 : 1);
-	const { scene, key } = sceneFor(flowers, sp);
+	const { scene, key } = sceneFor(flowers, sp, ribbonOf(opts.ribbon));
 	const plan = planBloom(flowers);
 	const total = totalTicksFor(flowers);
 	const g = opts.complete ? 1 : opts.growth !== undefined ? clamp01(opts.growth) : total ? clamp01((opts.tick ?? 0) / total) : 0;
@@ -507,6 +544,8 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 
 	const TONE = buf.tone;
 	const ID = buf.id;
+	const CNT = buf.cnt;
+	const SRGB = buf.srgb;
 	// Wind sway depends only on height: tabulate it once per frame.
 	const SWAY_N = 512;
 	const SWAY_MAX = 3;
@@ -523,6 +562,7 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 	const swayScale = (SWAY_N - 1) / SWAY_MAX;
 	// Each point covers two cells side by side: glyph cells are ~1.8× taller
 	// than wide, so this keeps surfaces solid with half the points.
+	const flowerZ = opts._depth ? new Float32Array(cols * rows).fill(-Infinity) : null;
 	const splat = (
 		wx: number,
 		wy: number,
@@ -535,6 +575,7 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 		glow: number,
 		tone: number,
 		sid: number,
+		bias = 0,
 	) => {
 		if (swayAmt > 0 && wy > 0) {
 			const si = Math.min(SWAY_N - 1, (wy * swayScale) | 0);
@@ -547,13 +588,24 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 		if (zc < 0.55) return;
 		const persp = CAM_FOCAL / zc;
 		const fx = ox + vx * persp * scale;
-		const col = Math.floor(fx);
-		const row = Math.round(oy - wy * persp * sAsp);
-		if (col < -1 || row < 0 || col >= cols || row >= rows) return;
-		const idx = row * cols + col;
-		const okA = col >= 0 && vz > Z[idx];
-		const okB = col + 1 < cols && vz > Z[idx + 1];
-		if (!okA && !okB) return;
+		const fy = oy - wy * persp * sAsp;
+		const col0 = Math.floor(fx);
+		// Flowers also cover the two nearest rows so hanging petals form a solid
+		// surface; stems stay 2×1 so the bunch does not get any fatter.
+		const row0 = kind === KIND_FLOWER ? Math.floor(fy) : Math.round(fy);
+		const row1 = kind === KIND_FLOWER ? row0 + 1 : row0;
+		if (col0 < -1 || row0 >= rows || row1 < 0 || col0 >= cols) return;
+		const depth = vz + bias;
+		// Front-surface resolve: every sample within SURF_EPS of a cell's
+		// nearest surface (same flower/part) is averaged, instead of the last
+		// point to win a near-tie. Winner-takes-all let a different point own
+		// the cell each frame as the bouquet turned, so shade and texture
+		// flashed. Averaging is order-independent and stable across frames.
+		const rA = row0 < 0 ? 0 : row0;
+		const rB = row1 >= rows ? rows - 1 : row1;
+		const cA = col0 < 0 ? 0 : col0;
+		const cB = col0 + 1 >= cols ? cols - 1 : col0 + 1;
+		if (flowerZ && kind === KIND_FLOWER) for (let row = rA; row <= rB; row++) for (let col = cA; col <= cB; col++) { const idx = row * cols + col; if (depth > flowerZ[idx]) flowerZ[idx] = depth; }
 		let mx = nx * cy + nz * sy;
 		let my = ny;
 		let mz = -nx * sy + nz * cy;
@@ -573,48 +625,40 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 		let lum = 0.16 + 0.84 * (wrap > 0 ? wrap : 0) + 0.26 * h;
 		if (glow > lum) lum = glow;
 		lum *= 0.72 + 0.28 * clamp01((vz + 1.4) / 2.8);
-		if (okA) {
-			Z[idx] = vz;
-			LUM[idx] = lum;
-			RGB[idx] = rgb;
-			KIND[idx] = kind;
-			TONE[idx] = tone;
-			ID[idx] = sid;
-		}
-		if (okB) {
-			const j = idx + 1;
-			Z[j] = vz;
-			LUM[j] = lum;
-			RGB[j] = rgb;
-			KIND[j] = kind;
-			TONE[j] = tone;
-			ID[j] = sid;
+		const packed = ((rgb >> 16) & 255) * 268435456 + ((rgb >> 8) & 255) * 16384 + (rgb & 255);
+		for (let row = rA; row <= rB; row++) {
+			for (let col = cA; col <= cB; col++) {
+				const idx = row * cols + col;
+				const zc0 = Z[idx];
+				if (depth > zc0 + SURF_EPS || zc0 === -Infinity || (depth > zc0 && ID[idx] !== sid)) {
+					// A clearly closer surface (or a closer different part): restart.
+					Z[idx] = depth;
+					LUM[idx] = lum;
+					TONE[idx] = tone;
+					CNT[idx] = 1;
+					SRGB[idx] = packed;
+					RGB[idx] = rgb;
+					KIND[idx] = kind;
+					ID[idx] = sid;
+				} else if (depth >= zc0 - SURF_EPS && ID[idx] === sid && CNT[idx] < 60) {
+					// Same surface, near the front: accumulate.
+					if (depth > zc0) Z[idx] = depth;
+					LUM[idx] += lum;
+					TONE[idx] += tone;
+					CNT[idx] += 1;
+					SRGB[idx] += packed;
+				}
+			}
 		}
 	};
 
-	// Static geometry: stems, leaves, roots, ribbon.
-	const rootProg = easeOutCubic(g / 0.14);
-	const baseLeaf = easeOutCubic((g - 0.16) / 0.3);
-	const ribbon = easeOutCubic((g - 0.3) / 0.12);
-	for (const grp of scene.groups) {
-		let limit = 1;
-		let unfurl = 1;
-		if (grp.kind === KIND_ROOT) limit = rootProg;
-		else if (grp.kind === KIND_RIBBON) unfurl = ribbon;
-		else if (grp.kind === KIND_STEM) {
-			limit = stemProgress(grp.stem, nStems, g);
-			// Once the head opens, the stem's top tucks into the bunch.
-			if (grp.attach > 0 && grp.attach < 1 && grp.stem >= 0) {
-				const op = flowerPhase(grp.stem, nStems, g).open;
-				const tuck = easeInOut((op - 0.72) / 0.28);
-				limit = Math.min(limit, 1 - tuck * (1 - grp.attach));
-			}
-		}
-		else if (grp.kind === KIND_LEAF) {
-			if (grp.stem < 0) unfurl = baseLeaf;
-			else unfurl = easeOutCubic((stemProgress(grp.stem, nStems, g) - grp.attach) / 0.22);
-		}
-		if (limit <= 0 || unfurl <= 0) continue;
+	// Static geometry: leaves first, then stems and ribbon so the stalks stay
+	// visible in the bunch core. Flowers are drawn after and win on depth, so
+	// petals always stay in front of their stems.
+	const baseLeaf = easeOutCubic((g - 0.1) / 0.28);
+	const ribbon = easeOutCubic((g - 0.08) / 0.12);
+	const splatGroup = (grp: (typeof scene.groups)[number], limit: number, unfurl: number) => {
+		if (limit <= 0 || unfurl <= 0) return;
 		const P = grp.pos;
 		const Nn = grp.nor;
 		const A = grp.along;
@@ -634,10 +678,23 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 			}
 			splat(x, y, z, Nn[k], Nn[k + 1], Nn[k + 2], C[i], grp.kind, 0, 1, 1000 + grp.kind);
 		}
+	};
+	const layers = opts._layers ?? 'all';
+	if (layers !== 'flowers') for (const grp of scene.groups) {
+		if (grp.kind !== KIND_LEAF) continue;
+		const unfurl =
+			grp.stem < 0 ? baseLeaf : easeOutCubic((stemProgress(grp.stem, nStems, g) - grp.attach) / 0.22);
+		splatGroup(grp, 1, unfurl);
+	}
+	if (layers !== 'flowers') for (const grp of scene.groups) {
+		if (grp.kind !== KIND_STEM && grp.kind !== KIND_RIBBON) continue;
+		const limit = grp.kind === KIND_STEM ? stemProgress(grp.stem, nStems, g) : 1;
+		const unfurl = grp.kind === KIND_RIBBON ? ribbon : 1;
+		splatGroup(grp, limit, unfurl);
 	}
 
 	// Flowers: bud → bloom by blending openness keyframes.
-	for (let fi = 0; fi < n; fi++) {
+	if (layers !== 'green') for (let fi = 0; fi < n; fi++) {
 		const inst = scene.flowers[fi];
 		const ph = flowerPhase(fi, nStems, g);
 		if (ph.bud <= 0) continue;
@@ -683,26 +740,107 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 		}
 	}
 
-	// Close 1-cell pinholes left between splats on the same surface.
-	for (let r = 1; r < rows - 1; r++) {
-		const base = r * cols;
-		for (let c = 1; c < cols - 1; c++) {
-			const idx = base + c;
-			if (Z[idx] !== -Infinity) continue;
-			let src = -1;
-			const l = idx - 1;
-			const rr = idx + 1;
-			const u = idx - cols;
-			const d = idx + cols;
-			if (Z[l] !== -Infinity && Z[rr] !== -Infinity && ID[l] === ID[rr] && Math.abs(Z[l] - Z[rr]) < 0.06) src = l;
-			else if (Z[u] !== -Infinity && Z[d] !== -Infinity && ID[u] === ID[d] && Math.abs(Z[u] - Z[d]) < 0.06) src = u;
-			if (src < 0) continue;
-			Z[idx] = Z[src] - 0.001;
-			LUM[idx] = LUM[src];
-			RGB[idx] = RGB[src];
-			KIND[idx] = KIND[src];
-			TONE[idx] = TONE[src];
-			ID[idx] = ID[src];
+	// Resolve accumulated samples into one averaged sample per cell.
+	for (let i = 0; i < N; i++) {
+		if (Z[i] === -Infinity) continue;
+		const k = CNT[i];
+		if (k > 1) {
+			const inv = 1 / k;
+			LUM[i] *= inv;
+			TONE[i] *= inv;
+			// Unpack the channel sums (each < 2^14) and snap blended colours to
+			// a 3-bit grid so shades stay cacheable.
+			const sum = SRGB[i];
+			const rs = Math.floor(sum / 268435456);
+			const gs = Math.floor((sum - rs * 268435456) / 16384);
+			const bs = sum - rs * 268435456 - gs * 16384;
+			const r = Math.round((rs * inv) / 8) * 8;
+			const gg = Math.round((gs * inv) / 8) * 8;
+			const bb = Math.round((bs * inv) / 8) * 8;
+			RGB[i] = (Math.min(255, r) << 16) | (Math.min(255, gg) << 8) | Math.min(255, bb);
+		}
+	}
+
+	// Close 1-cell pinholes in a surface, and restore a closer flower over a
+	// farther stem/leaf that landed in a gap between petal splats. Without
+	// this, the dense lower bunch shows through hanging blooms as if the
+	// stalks were drawn on top of the petals.
+	// Gap passes read from a snapshot and write to the live buffers, so the
+	// result does not depend on scan order. Filling in place let one fill feed
+	// the next along a row, so whole streaks of petal appeared and vanished
+	// from frame to frame as the bouquet turned (the "flashing" texture).
+	const snap = getSnap(N);
+	const takeSnap = () => {
+		snap.z.set(Z);
+		snap.id.set(ID);
+		snap.kind.set(KIND);
+		snap.lum.set(LUM);
+		snap.rgb.set(RGB);
+		snap.tone.set(TONE);
+	};
+	const copyFrom = (idx: number, src: number) => {
+		Z[idx] = snap.z[src] - 0.001;
+		LUM[idx] = snap.lum[src];
+		RGB[idx] = snap.rgb[src];
+		KIND[idx] = snap.kind[src];
+		TONE[idx] = snap.tone[src];
+		ID[idx] = snap.id[src];
+	};
+	// Empty 1-cell holes inside one surface (any part, including stems).
+	takeSnap();
+	{
+		const z0 = snap.z;
+		const id0 = snap.id;
+		for (let r = 1; r < rows - 1; r++) {
+			const base = r * cols;
+			for (let c = 1; c < cols - 1; c++) {
+				const idx = base + c;
+				if (z0[idx] !== -Infinity) continue;
+				let src = -1;
+				const l = idx - 1;
+				const rr = idx + 1;
+				const u = idx - cols;
+				const d = idx + cols;
+				if (z0[l] !== -Infinity && z0[rr] !== -Infinity && id0[l] === id0[rr] && Math.abs(z0[l] - z0[rr]) < 0.06)
+					src = z0[l] >= z0[rr] ? l : rr;
+				else if (z0[u] !== -Infinity && z0[d] !== -Infinity && id0[u] === id0[d] && Math.abs(z0[u] - z0[d]) < 0.06)
+					src = z0[u] >= z0[d] ? u : d;
+				if (src >= 0) copyFrom(idx, src);
+			}
+		}
+	}
+	// Then let a closer petal reclaim a 1-cell gap where a farther stalk or
+	// another flower shows through between its splats. Without this, the
+	// dense lower bunch shows through hanging blooms.
+	takeSnap();
+	{
+		const z0 = snap.z;
+		const id0 = snap.id;
+		const k0 = snap.kind;
+		for (let r = 1; r < rows - 1; r++) {
+			const base = r * cols;
+			for (let c = 1; c < cols - 1; c++) {
+				const idx = base + c;
+				const here = z0[idx];
+				let src = -1;
+				let srcZ = -Infinity;
+				const consider = (a: number, b: number) => {
+					if (z0[a] === -Infinity || z0[b] === -Infinity) return;
+					if (id0[a] !== id0[b] || id0[a] <= 0 || id0[a] === id0[idx]) return;
+					if (k0[a] !== KIND_FLOWER || k0[b] !== KIND_FLOWER) return;
+					if (Math.abs(z0[a] - z0[b]) > 0.08) return;
+					const nearer = z0[a] >= z0[b] ? a : b;
+					const z = z0[nearer];
+					if (here !== -Infinity && z < here + 0.015) return;
+					if (z > srcZ) {
+						srcZ = z;
+						src = nearer;
+					}
+				};
+				consider(idx - 1, idx + 1);
+				consider(idx - cols, idx + cols);
+				if (src >= 0) copyFrom(idx, src);
+			}
 		}
 	}
 
@@ -726,9 +864,14 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 					const cc = c + dc;
 					if (cc < 0 || cc >= cols) continue;
 					const j = rr * cols + cc;
-					if (ID[j] !== id || Z[j] === -Infinity || Math.abs(Z[j] - z) > 0.05) continue;
-					sum += LUM[j];
-					wsum += 1;
+					if (ID[j] !== id || Z[j] === -Infinity) continue;
+					// Soft depth weight: a hard cut-off flips neighbours in and out
+					// of the blur between frames.
+					const dz = Z[j] - z;
+					const w = 1 - (dz < 0 ? -dz : dz) * (1 / 0.06);
+					if (w <= 0) continue;
+					sum += LUM[j] * w;
+					wsum += w;
 				}
 			}
 			L2[idx] = sum / wsum;
@@ -789,6 +932,7 @@ export function renderBouquet(opts: RenderOptions): RenderResult {
 		plan,
 		totalTicks: total,
 		done,
+		...(opts._depth ? { depth: Z.slice(), flowerDepth: flowerZ ?? undefined } : {}),
 	};
 }
 
@@ -837,6 +981,132 @@ export function gridToPlainText(grid: Grid, letter?: Pick<Letter, 'note'>): stri
 		return `${body}\n\n${' '.repeat(pad)}${note}\n`;
 	}
 	return body + '\n';
+}
+
+
+export type StemJoint = {
+	id: import('./types').FlowerId;
+	index: number;
+	hx: number;
+	hy: number;
+	sx: number;
+	sy: number;
+	/** Grid-cell distance between projected stem tip and head base. */
+	gap: number;
+	/** Head has visible flower cells nearby. */
+	visible: boolean;
+	/** A stem/calyx cell sits at or just below the projected base (underside). */
+	connected: boolean;
+	/** Flower cells on the face above the base. */
+	faceFlower: number;
+	/** Stem cells painted on the face above the base (should stay low). */
+	faceStem: number;
+};
+
+/**
+ * After a render, report how tightly each stem meets its head in projected space.
+ * Used to guarantee no floating petals.
+ */
+export function measureStemJoints(opts: RenderOptions): { joints: StemJoint[]; result: RenderResult } {
+	const result = renderBouquet(opts);
+	const cols = opts.cols ?? COLS;
+	const rows = opts.rows ?? ROWS;
+	const sp = opts.fill && opts.fill < 0.1 ? opts.fill : densityFor(cols) * (opts.focus ? 0.46 : 1);
+	const { scene } = sceneFor(opts.flowers, sp, ribbonOf(opts.ribbon));
+	const yaw = opts.yaw ?? 0;
+	const cam = opts.focus
+		? fitCamera(scene.headBounds.length ? scene.headBounds : scene.bounds, cols, rows, 0, true)
+		: fitCamera(scene.bounds, cols, rows, (opts.critters?.length ?? 0) ? 0.12 : 0);
+	const cy = Math.cos(yaw);
+	const sy = Math.sin(yaw);
+	const project = (x: number, y: number, z: number) => {
+		const vx = x * cy + z * sy;
+		const vz = -x * sy + z * cy;
+		const zc = cam.camZ - vz;
+		if (zc < 0.55) return null;
+		const persp = CAM_FOCAL / zc;
+		return { cx: cam.originX + vx * persp * cam.scale, cy: cam.originY - y * persp * cam.scale * cam.aspect };
+	};
+	const countKind = (x: number, y: number, dx0: number, dx1: number, dy0: number, dy1: number, want: string[]) => {
+		let n = 0;
+		for (let dy = dy0; dy <= dy1; dy++) {
+			for (let dx = dx0; dx <= dx1; dx++) {
+				const xi = Math.round(x + dx);
+				const yi = Math.round(y + dy);
+				if (yi < 0 || yi >= rows || xi < 0 || xi >= cols) continue;
+				const k = result.grid[yi][xi]?.kind;
+				if (k && want.includes(k)) n++;
+			}
+		}
+		return n;
+	};
+	const kindsNear = (x: number, y: number, rad: number, want: string[]) =>
+		countKind(x, y, -rad, rad, -rad, rad, want);
+	/** Just below the projected base (larger row = lower on the screen). */
+	const kindsNearBelow = (x: number, y: number, halfW: number, down: number, want: string[]) =>
+		countKind(x, y, -halfW, halfW, 0, down, want);
+	/** The bloom face sits above the base (smaller row). */
+	const kindsNearAbove = (x: number, y: number, halfW: number, up: number, want: string[]) =>
+		countKind(x, y, -halfW, halfW, -up, -1, want);
+	const joints: StemJoint[] = [];
+	for (let i = 0; i < scene.flowers.length; i++) {
+		const inst = scene.flowers[i];
+		const curve = scene.stems[i];
+		if (!curve) continue;
+		const head = project(inst.base.x, inst.base.y, inst.base.z);
+		if (!head) continue;
+		// Sample the last stretch of the stem; the closest projected point to the base is the joint.
+		let best = Infinity;
+		let sx = head.cx;
+		let sy = head.cy;
+		for (let s = 0; s <= 16; s++) {
+			const t = 0.8 + 0.2 * (s / 16);
+			const p = bez(curve, t);
+			const pr = project(p.x, p.y, p.z);
+			if (!pr) continue;
+			const d = Math.hypot(pr.cx - head.cx, pr.cy - head.cy);
+			if (d < best) {
+				best = d;
+				sx = pr.cx;
+				sy = pr.cy;
+			}
+		}
+		// The attachment sits at the underside of the head. A visible stalk should
+		// appear along the last stretch of the stem or just below the base, never
+		// as overpaint on the bloom face.
+		const under = kindsNearBelow(head.cx, head.cy, 5, 7, ['stem', 'leaf']);
+		let alongStem = 0;
+		let alongFlower = 0;
+		for (let s = 0; s <= 10; s++) {
+			const t = 0.62 + 0.3 * (s / 10);
+			const p = bez(curve, t);
+			const pr = project(p.x, p.y, p.z);
+			if (!pr) continue;
+			const rad = cols < 80 ? 3 : 2;
+			alongStem += kindsNear(pr.cx, pr.cy, rad, ['stem', 'leaf']);
+			alongFlower += kindsNear(pr.cx, pr.cy, rad, ['flower']);
+		}
+		const faceFlower = kindsNearAbove(head.cx, head.cy, 3, 3, ['flower']);
+		const faceStem = kindsNearAbove(head.cx, head.cy, 3, 3, ['stem']);
+		const visible = kindsNearAbove(head.cx, head.cy, 5, 7, ['flower']) > (cols < 80 ? 3 : 8);
+		// Hidden-by-petals is still connected in 3D: the tip sits on the base and
+		// the last stretch is behind a closer bloom, not a geometric gap.
+		const connected = under > 0 || alongStem > 0 || alongFlower > 0;
+		joints.push({
+			id: inst.id,
+			index: i,
+			hx: head.cx,
+			hy: head.cy,
+			sx,
+			sy,
+			gap: best,
+			visible,
+			connected,
+			faceFlower,
+			faceStem,
+		});
+	}
+	return { joints, result };
 }
 
 export { TERMINAL_BG };

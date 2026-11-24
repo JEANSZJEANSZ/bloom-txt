@@ -4,7 +4,7 @@
 	import { OCCASION_BY_ID } from '../lib/occasions';
 	import type { Letter } from '../lib/types';
 
-	let { letter, animate = true }: { letter: Letter; animate?: boolean } = $props();
+	let { letter, animate = true, tone = 'paper' }: { letter: Letter; animate?: boolean; tone?: 'paper' | 'night' } = $props();
 	const occasion = $derived(OCCASION_BY_ID[letter.occasion]);
 	const hasBody = $derived(letter.to || letter.from || letter.message);
 	let shown = $state('');
@@ -33,7 +33,7 @@
 </script>
 
 {#if hasBody}
-	<article class="card" style:--accent={occasion.hue}>
+	<article class="card" class:night={tone === 'night'} style:--accent={occasion.hue}>
 		<p class="occasion">{occasion.greeting}</p>
 		{#if letter.to}
 			<p class="to">Dear {letter.to},</p>
@@ -67,7 +67,7 @@
 		padding: 1.25rem 1.4rem 1.4rem;
 		box-shadow: var(--shadow);
 		text-align: left;
-		animation: rise 0.7s ease both;
+		animation: rise 0.7s var(--ease-out, ease) both;
 	}
 	.occasion {
 		margin: 0 0 0.7rem;
@@ -132,6 +132,32 @@
 			animation: none;
 		}
 		.caret {
+			animation: none;
+		}
+	}
+
+	.card.night {
+		background:
+			linear-gradient(180deg, rgba(255, 250, 242, 0.98), #f4e8d8);
+		border-color: rgba(255, 236, 210, 0.4);
+		box-shadow:
+			0 30px 70px -28px rgba(0, 0, 0, 0.65),
+			0 0 0 1px rgba(255, 230, 200, 0.12);
+		transform-origin: top center;
+		animation: unfold 1.15s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
+	}
+	@keyframes unfold {
+		from {
+			opacity: 0;
+			transform: perspective(900px) rotateX(-72deg) translateY(18px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.card.night {
 			animation: none;
 		}
 	}

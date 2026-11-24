@@ -14,6 +14,7 @@
 		onsurprise,
 		onclear,
 		renderStyle = DEFAULT_STYLE,
+		ondragstart,
 	}: {
 		flowers: Placement[];
 		onadd: (id: FlowerId, color: ColorId) => void;
@@ -22,6 +23,7 @@
 		onsurprise: () => void;
 		onclear: () => void;
 		renderStyle?: RenderStyle;
+		ondragstart: (id: FlowerId, color: ColorId, ev: PointerEvent) => void;
 	} = $props();
 
 	let selected: FlowerId = $state('rose');
@@ -34,12 +36,62 @@
 		selected = id;
 		color = FLOWERS.find((f) => f.id === id)!.defaultColor;
 	}
+
+	type Press = {
+		id: FlowerId;
+		color: ColorId;
+		x: number;
+		y: number;
+		pointerId: number;
+		fromVariety: boolean;
+	};
+	let press: Press | null = null;
+	let dragging = false;
+
+	function pointerDown(e: PointerEvent, id: FlowerId, col: ColorId, fromVariety: boolean) {
+		if (e.button !== 0) return;
+		press = { id, color: col, x: e.clientX, y: e.clientY, pointerId: e.pointerId, fromVariety };
+		dragging = false;
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	}
+
+	function pointerMove(e: PointerEvent) {
+		if (!press || press.pointerId !== e.pointerId) return;
+		const dx = e.clientX - press.x;
+		const dy = e.clientY - press.y;
+		if (!dragging && dx * dx + dy * dy > 64) {
+			if (full) return;
+			dragging = true;
+			ondragstart(press.id, press.color, e);
+		}
+	}
+
+	function pointerUp(e: PointerEvent) {
+		if (!press || press.pointerId !== e.pointerId) return;
+		const p = press;
+		press = null;
+		try {
+			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+		} catch {
+			/* already released */
+		}
+		if (!dragging && p.fromVariety) choose(p.id);
+		else if (!dragging && !p.fromVariety && !full) onadd(p.id, p.color);
+		dragging = false;
+	}
+
+	function onGrabKey(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			if (!full) onadd(selected, color);
+		}
+	}
 </script>
 
 <section class="picker" aria-labelledby="pick-title">
 	<div class="head">
 		<h2 id="pick-title">Gather your flowers</h2>
-		<p>Pick a bloom, a color, and add it to the bunch. The stems will fan out on their own.</p>
+		<p>Pick a bloom and a color, then drag it onto the bouquet. You can also use the add button or press Enter.</p>
 	</div>
 
 	<ul class="varieties">
@@ -49,8 +101,11 @@
 					type="button"
 					class="kind"
 					class:on={selected === f.id}
-					onclick={() => choose(f.id)}
 					aria-pressed={selected === f.id}
+					onpointerdown={(e) => pointerDown(e, f.id, f.id === selected ? color : f.defaultColor, true)}
+					onpointermove={pointerMove}
+					onpointerup={pointerUp}
+					onpointercancel={pointerUp}
 				>
 					<span class="kind-name">{f.name}</span>
 					<span class="kind-blurb">{f.blurb}</span>
@@ -60,7 +115,20 @@
 	</ul>
 
 	<div class="studio">
-		<FlowerPreview id={selected} {color} {renderStyle} label={`${def.name} in ${PETAL[color].name}`} />
+		<div
+			class="grab"
+			role="button"
+			tabindex="0"
+			aria-label={`Drag a ${def.name} onto the bouquet, or press Enter to add one`}
+			onpointerdown={(e) => pointerDown(e, selected, color, false)}
+			onpointermove={pointerMove}
+			onpointerup={pointerUp}
+			onpointercancel={pointerUp}
+			onkeydown={onGrabKey}
+		>
+			<FlowerPreview id={selected} {color} {renderStyle} label={`${def.name} in ${PETAL[color].name}`} />
+			<span class="grab-hint">Drag onto the bouquet</span>
+		</div>
 		<div class="studio-side">
 			<p class="current">{def.name}</p>
 			<p class="blurb">{def.blurb}</p>
@@ -120,7 +188,7 @@
 			{/each}
 		</ol>
 	{:else}
-		<p class="empty">Your vase is empty. Add a flower, or let me surprise you.</p>
+		<p class="empty">Your vase is empty. Drag a flower onto the bouquet, or let me surprise you.</p>
 	{/if}
 </section>
 
@@ -198,6 +266,33 @@
 		border-radius: 14px;
 		padding: 0.9rem 1rem;
 		border: 1px solid #1a1f2a;
+	}
+	.grab {
+		cursor: grab;
+		touch-action: none;
+		user-select: none;
+		border-radius: 12px;
+		outline: none;
+	}
+	.grab:focus-visible {
+		outline: 2px solid #ff8ad4;
+		outline-offset: 3px;
+	}
+	.grab:active {
+		cursor: grabbing;
+	}
+	.grab-hint {
+		display: block;
+		margin-top: 0.35rem;
+		text-align: center;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: #9aa3b2;
+	}
+	.kind {
+		touch-action: none;
 	}
 	.current {
 		margin: 0;

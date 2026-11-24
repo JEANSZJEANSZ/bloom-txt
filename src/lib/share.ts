@@ -3,6 +3,8 @@ import { isCritterId } from './critters';
 import { isFlowerId } from './flowers';
 import { COLOR_ORDER } from './palette';
 import { clampDetail, DEFAULT_DETAIL } from './look';
+import { decodeMusic, encodeMusic } from './music';
+import { DEFAULT_RIBBON, isRibbonId, ribbonOf } from './ribbon';
 import type { ColorId, CritterId, Gift, GiftPayload, OccasionId, Placement } from './types';
 import { LIMITS } from './types';
 
@@ -43,6 +45,10 @@ export function toPayload(gift: Gift): GiftPayload {
 	if (gift.style === 'retro') payload.r = 'retro';
 	const detail = clampDetail(gift.detail, DEFAULT_DETAIL);
 	if (detail !== DEFAULT_DETAIL) payload.d = detail;
+	const ribbon = ribbonOf(gift.ribbon);
+	if (ribbon !== DEFAULT_RIBBON) payload.b = ribbon;
+	const mu = encodeMusic(gift.music);
+	if (mu) payload.mu = mu;
 	return payload;
 }
 
@@ -76,6 +82,9 @@ export function fromPayload(p: GiftPayload): Gift {
 		const detail = clampDetail(p.d, DEFAULT_DETAIL);
 		if (detail !== DEFAULT_DETAIL) gift.detail = detail;
 	}
+	if (isRibbonId(p.b) && p.b !== DEFAULT_RIBBON) gift.ribbon = p.b;
+	const music = decodeMusic(p.mu);
+	if (music.kind !== 'none') gift.music = music;
 	return gift;
 }
 

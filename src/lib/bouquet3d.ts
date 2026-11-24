@@ -1,11 +1,12 @@
 /**
  * 3D bouquet layout: flower heads on a dome, tube stems that cross at a tied
- * ribbon, curved leaf blades, and a little root tuft. Static geometry is
+ * ribbon, and curved leaf blades. Static geometry is
  * stored as flat typed arrays so the per-frame loop stays tight.
  */
 import { resolveFlowerColors } from './flowerColors';
 import { flowerMesh, SLOT_COUNT, type FlowerMesh } from './flora3d';
 import { mulberry32, seedFromFlowers } from './rng';
+import { DEFAULT_RIBBON, RIBBON, type RibbonId } from './ribbon';
 import type { ColorId, FlowerId, Placement } from './types';
 
 export type V3 = { x: number; y: number; z: number };
@@ -60,28 +61,6 @@ export type Scene3 = {
 
 const TAU = Math.PI * 2;
 const GOLDEN = Math.PI * (3 - Math.sqrt(5));
-
-function splitAt(c: StemCurve, t: number): StemCurve {
-	const L = (a: V3, b: V3): V3 => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
-	const a = L(c.p0, c.p1);
-	const b = L(c.p1, c.p2);
-	const d = L(c.p2, c.p3);
-	const ab = L(a, b);
-	const bd = L(b, d);
-	return { p0: c.p0, p1: a, p2: ab, p3: L(ab, bd) };
-}
-
-/** Curve parameter where the stem first reaches height `y`. */
-function cutParam(c: StemCurve, y: number): number {
-	let lo = 0;
-	let hi = 1;
-	for (let i = 0; i < 24; i++) {
-		const m = (lo + hi) / 2;
-		if (bez(c, m).y < y) lo = m;
-		else hi = m;
-	}
-	return Math.max(0.3, lo);
-}
 
 function scaleRgb(rgb: number, f: number): number {
 	const c = (s: number) => Math.max(0, Math.min(255, Math.round(((rgb >> s) & 255) * f)));
@@ -217,6 +196,7 @@ function tube(
 	sp: number,
 	ring: number,
 	color: (t: number) => number,
+	alongOf: (t: number) => number = (t) => t,
 ) {
 	const n = Math.max(4, Math.ceil(length / sp));
 	for (let i = 0; i <= n; i++) {
@@ -233,7 +213,7 @@ function tube(
 			const nx = a.x * ca + b.x * sa;
 			const ny = a.y * ca + b.y * sa;
 			const nz = a.z * ca + b.z * sa;
-			g.push(c.x + nx * r, c.y + ny * r, c.z + nz * r, nx, ny, nz, rgb, t);
+			g.push(c.x + nx * r, c.y + ny * r, c.z + nz * r, nx, ny, nz, rgb, alongOf(t));
 		}
 	}
 }
@@ -320,12 +300,51 @@ function blade(
 	}
 }
 
+
+/** A small green collar just beneath the head, sitting on the stem top. Drawn with normal depth so petals in front hide it. */
+function calyx(
+	g: GroupBuilder,
+	base: V3,
+	X: V3,
+	Y: V3,
+	Z: V3,
+	size: number,
+	sp: number,
+	dark: number,
+	mid: number,
+) {
+	const rad = 0.012 + size * 0.016;
+	const h = 0.018 + size * 0.016;
+	const rings = Math.max(2, Math.ceil(h / Math.max(0.007, sp)));
+	const around = Math.max(6, Math.ceil((TAU * rad) / Math.max(0.007, sp)));
+	for (let j = 0; j <= rings; j++) {
+		const t = j / rings;
+		const along = 0.9 + 0.1 * t;
+		// Entirely under the receptacle: y is negative along the flower axis.
+		const y = -h * (1 - t * 0.85);
+		const r = rad * (0.45 + 0.55 * t);
+		for (let i = 0; i < around; i++) {
+			const a = (i / around) * TAU;
+			const ca = Math.cos(a);
+			const sa = Math.sin(a);
+			const ox = X.x * r * ca + Z.x * r * sa;
+			const oy = X.y * r * ca + Z.y * r * sa;
+			const oz = X.z * r * ca + Z.z * r * sa;
+			const px = base.x + Y.x * y + ox;
+			const py = base.y + Y.y * y + oy;
+			const pz = base.z + Y.z * y + oz;
+			const nl = Math.hypot(ox, oy, oz) || 1;
+			g.push(px, py, pz, ox / nl, oy / nl + 0.25, oz / nl, t < 0.45 ? dark : mid, along);
+		}
+	}
+}
+
 export function densityFor(cols: number): number {
 	// About two glyph cells per point horizontally (splats are two cells wide).
 	return Math.round(Math.max(0.0095, Math.min(0.03, 2.6 / Math.max(40, cols))) * 1e4) / 1e4;
 }
 
-export function buildScene3(flowers: Placement[], sp: number): Scene3 {
+export function buildScene3(flowers: Placement[], sp: number, ribbon: RibbonId = DEFAULT_RIBBON): Scene3 {
 	const seed = seedFromFlowers(flowers);
 	const rng = mulberry32(seed);
 	const n = flowers.length;
@@ -341,10 +360,9 @@ export function buildScene3(flowers: Placement[], sp: number): Scene3 {
 	const STEM_TOP = hexToInt('#6ee882');
 	const LEAF_DARK = hexToInt('#36b457');
 	const LEAF_LIGHT = hexToInt('#8ae89f');
-	const ROOT = hexToInt('#9a6a3e');
-	const ROOT_DIM = hexToInt('#6e4a2a');
-	const RIBBON = hexToInt('#ff9cc8');
-	const RIBBON_HI = hexToInt('#ffd0e6');
+	const tone = RIBBON[ribbon] ?? RIBBON[DEFAULT_RIBBON];
+	const RIBBON_MID = tone.midInt;
+	const RIBBON_HI = tone.brightInt;
 
 	// Flower heads spread over an upright ellipsoid (taller than wide), faces
 	// along the outward normal so the ones toward the viewer look straight at
@@ -354,10 +372,10 @@ export function buildScene3(flowers: Placement[], sp: number): Scene3 {
 	for (const f of flowers) area += HEAD_R[f.id] * HEAD_R[f.id];
 	// Solid round heads (roses, tulips…) need more room than open lily stars.
 	const solid = n ? flowers.filter((f) => f.id !== 'lily').length / n : 0;
-	const Rh = n <= 1 ? 0 : (0.27 + 0.06 * solid) * Math.sqrt(area) * (n <= 3 ? 0.8 : 1);
-	const Rv = Rh * 1.9;
-	const leafScale = n <= 3 ? 0.8 : Math.max(0.6, Math.min(1.1, Rh / 0.26));
-	const cy = n <= 3 ? Math.max(0.95, 0.2 + Rv) : 0.24 + Rv;
+	const Rh = n <= 1 ? 0 : (0.29 + 0.05 * solid) * Math.sqrt(area) * (n <= 3 ? 0.8 : 1);
+	const Rv = Rh * 1.72;
+	const leafScale = n <= 3 ? 0.8 : Math.max(0.6, Math.min(1.0, Rh / 0.26));
+	const cy = n <= 3 ? Math.max(0.95, 0.2 + Rv) : 0.2 + Rv;
 	const domeC: V3 = { x: 0, y: cy, z: 0 };
 	const a0 = 0.08;
 	const a1 = n <= 3 ? 1.4 : 2.5;
@@ -417,32 +435,31 @@ export function buildScene3(flowers: Placement[], sp: number): Scene3 {
 		const ux = n <= 1 ? 0 : d.x / hl;
 		const uz = n <= 1 ? 0 : d.z / hl;
 		const jitter = (rng() - 0.5) * 0.02;
-		const full: StemCurve = {
+		// Tip is the head's rear/base: for a face tilted toward camera the attachment
+		// sits behind and below the petals, so the stalk vanishes under the bloom.
+		const curve: StemCurve = {
 			p0: { x: 0.035 * ux + jitter, y: -0.01, z: 0.035 * uz },
-			p1: { x: 0.025 * ux, y: tie.y + 0.06, z: 0.025 * uz },
-			p2: { x: base.x * 0.3, y: tie.y + (base.y - tie.y) * 0.45, z: base.z * 0.3 },
+			p1: { x: 0.028 * ux, y: tie.y + 0.05, z: 0.028 * uz },
+			p2: { x: base.x * 0.48, y: tie.y + (base.y - tie.y) * 0.38, z: base.z * 0.48 },
 			p3: base,
 		};
-		// Stems disappear into the bunch of heads instead of running up
-		// through the gaps to the top blooms.
-		const yCut = cy - Rv * 0.7;
-		const tCut = n <= 3 || base.y <= yCut ? 1 : cutParam(full, yCut);
-		const curve = tCut >= 1 ? full : splitAt(full, tCut);
 		stems.push(curve);
 		const g = new GroupBuilder();
-		const len = Math.hypot(base.x, base.y, base.z) * 1.1;
+		const len = Math.hypot(base.x, base.y, base.z) * 1.12;
 		tube(
 			g,
-			(t) => bez(full, t),
-			(t) => bezTangent(full, t),
+			(t) => bez(curve, t),
+			(t) => bezTangent(curve, t),
 			len,
-			(t) => 0.016 * (1 - 0.3 * t),
+			(t) => 0.024 * (1 - 0.5 * t),
 			sp,
 			sp < 0.013 ? 6 : 5,
 			(t) => (t < 0.15 ? STEM_DARK : t > 0.7 ? STEM_TOP : STEM_MID),
 		);
-		// Full stem up to the bud; `attach` marks where it tucks into the bunch once open.
-		groups.push(g.done(KIND_STEM, i, full.p0, tCut));
+		groups.push(g.done(KIND_STEM, i, curve.p0, 1));
+		const cg = new GroupBuilder();
+		calyx(cg, base, X, Y, Z, size, sp, LEAF_DARK, STEM_MID);
+		groups.push(cg.done(KIND_STEM, i, base, 1));
 
 		// A leaf low on some stems, fanning out of the bunch.
 		if (i % 2 === 0) {
@@ -478,32 +495,6 @@ export function buildScene3(flowers: Placement[], sp: number): Scene3 {
 		groups.push(lg.done(KIND_LEAF, -1, o, 0));
 	}
 
-	// Root tuft.
-	{
-		const g = new GroupBuilder();
-		for (let i = 0; i < 12; i++) {
-			const ang = (i / 12) * TAU + rng() * 0.4;
-			const reach = 0.08 + rng() * 0.08;
-			const drop = 0.05 + rng() * 0.06;
-			const wig = (rng() - 0.5) * 0.06;
-			const sx = Math.sin(ang);
-			const sz = Math.cos(ang);
-			const c = (t: number): V3 => ({
-				x: sx * reach * t + Math.cos(ang) * wig * Math.sin(t * 6),
-				y: -0.02 - drop * Math.pow(t, 0.8),
-				z: sz * reach * t - Math.sin(ang) * wig * Math.sin(t * 6),
-			});
-			const tg = (t: number): V3 => {
-				const a = c(Math.max(0, t - 0.02));
-				const b = c(Math.min(1, t + 0.02));
-				const l = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) || 1;
-				return { x: (b.x - a.x) / l, y: (b.y - a.y) / l, z: (b.z - a.z) / l };
-			};
-			tube(g, c, tg, reach + drop, (t) => 0.007 * (1 - 0.6 * t), sp, 3, (t) => (t > 0.6 ? ROOT_DIM : ROOT));
-		}
-		groups.push(g.done(KIND_ROOT, -2, { x: 0, y: -0.02, z: 0 }));
-	}
-
 	// Ribbon: a band around the tie, a bow, and two tails.
 	{
 		const g = new GroupBuilder();
@@ -515,7 +506,7 @@ export function buildScene3(flowers: Placement[], sp: number): Scene3 {
 			const a = (i / ringN) * TAU;
 			for (let j = 0; j <= hN; j++) {
 				const y = tie.y - h / 2 + (h * j) / hN;
-				g.push(Math.sin(a) * R, y, Math.cos(a) * R, Math.sin(a), 0, Math.cos(a), j === 0 || j === hN ? RIBBON_HI : RIBBON, 1);
+				g.push(Math.sin(a) * R, y, Math.cos(a) * R, Math.sin(a), 0, Math.cos(a), j === 0 || j === hN ? RIBBON_HI : RIBBON_MID, 1);
 			}
 		}
 		const loop = (side: number) => (t: number): V3 => {
@@ -539,9 +530,9 @@ export function buildScene3(flowers: Placement[], sp: number): Scene3 {
 		};
 		for (const side of [-1, 1]) {
 			const c = loop(side);
-			tube(g, c, tg(c), 0.3, () => 0.011, sp, 5, () => RIBBON);
+			tube(g, c, tg(c), 0.3, () => 0.011, sp, 5, () => RIBBON_MID);
 			const tc = tail(side);
-			tube(g, tc, tg(tc), 0.15, () => 0.009, sp, 4, () => RIBBON);
+			tube(g, tc, tg(tc), 0.15, () => 0.009, sp, 4, () => RIBBON_MID);
 		}
 		// Knot.
 		const m = 24;

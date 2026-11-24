@@ -95,6 +95,10 @@ export type Gift = {
 	style?: RenderStyle;
 	/** Grid density, 0 (chunky) to 100 (finest). Optional; treat missing as 100. */
 	detail?: number;
+	/** Optional bow colour; treat missing as the classic pink ribbon. */
+	ribbon?: import('./ribbon').RibbonId;
+	/** Optional music; treat missing as silence. */
+	music?: import('./music').Music;
 };
 
 export type GiftPayload = {
@@ -111,4 +115,8 @@ export type GiftPayload = {
 	r?: 'retro';
 	/** 0–100 grid density; omit for the finest (current 3D) default. */
 	d?: number;
+	/** Bow / ribbon colour; omit for the classic pink. */
+	b?: string;
+	/** Music: a built-in tune id, or `yt:VIDEOID` / `yt:VIDEOID@seconds`. Omit for silence. */
+	mu?: string;
 };

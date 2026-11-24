@@ -2,8 +2,13 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { copyPlainText, downloadPng } from '../lib/export';
 	import { DEFAULT_DETAIL, DEFAULT_STYLE, styleOf } from '../lib/look';
+	import { DEFAULT_MUSIC } from '../lib/music';
+	import { DEFAULT_RIBBON } from '../lib/ribbon';
 	import { decodeGift } from '../lib/share';
+	import Atmosphere from './Atmosphere.svelte';
+	import BloomCharms from './BloomCharms.svelte';
 	import Envelope from './Envelope.svelte';
+	import GiftMusic, { type MusicHandle } from './GiftMusic.svelte';
 	import LetterCard from './LetterCard.svelte';
 	import BouquetStage, { type StageHandle } from './BouquetStage.svelte';
 
@@ -23,7 +28,16 @@
 
 	const flowers = $derived(gift?.flowers ?? []);
 	const letter = $derived(gift?.letter);
+	const music = $derived(gift?.music ?? DEFAULT_MUSIC);
+	const ribbon = $derived(gift?.ribbon ?? DEFAULT_RIBBON);
 	let stage = $state<StageHandle | undefined>(undefined);
+	let musicHandle = $state<MusicHandle | undefined>(undefined);
+	let musicOn = $state(false);
+
+	function startMusic() {
+		musicOn = true;
+		void musicHandle?.start();
+	}
 
 	function clearTimers() {
 		if (openTimer !== undefined) clearTimeout(openTimer);
@@ -55,6 +69,8 @@
 
 	function openEnvelope() {
 		if (phase !== 'sealed') return;
+		// Start music in the same user-gesture turn so autoplay is allowed.
+		startMusic();
 		phase = 'opening';
 		openTimer = window.setTimeout(beginBloom, reduced ? 0 : 1150);
 	}
@@ -69,14 +85,19 @@
 			return;
 		}
 		if (phase === 'blooming') {
-			stage?.advance();
+			// If the bloom is already done, just reveal the letter.
+			// Calling stage.advance() here would bounce back into this handler and overflow the stack.
 			if (stage?.isGrown()) {
 				phase = 'letter';
+				return;
 			}
+			stage?.advance();
+			if (stage?.isGrown()) phase = 'letter';
 		}
 	}
 
 	function replay() {
+		startMusic();
 		beginBloom();
 	}
 
@@ -104,7 +125,10 @@
 	}
 
 	onMount(() => {
-		if (autoOpen || reduced) beginBloom();
+		if (autoOpen || reduced) {
+			beginBloom();
+			if (music.kind !== 'none') musicOn = true;
+		}
 	});
 
 	onDestroy(clearTimers);
@@ -113,182 +137,252 @@
 <svelte:window onkeydown={onkey} />
 
 <div class="page" data-phase={phase}>
-	<header>
-		<p class="eyebrow">Bloom.txt</p>
-		{#if gift && phase !== 'sealed' && phase !== 'opening'}
-			<h1>{letter?.to ? `For ${letter.to}` : 'A little bouquet'}</h1>
-		{/if}
-	</header>
+	<Atmosphere fireflies={true} petals={true} moon={true} fixed={true} />
 
 	{#if !gift}
 		<section class="wilted">
 			<pre class="sad" aria-hidden="true">{`    .  .
-   \\|/
+   \|/
     |    the stems came loose
    / \\
   '   '`}</pre>
 			<h2>This bloom wilted</h2>
 			<p>The gift link looks broken or incomplete. Ask them to send it again, or grow a new one.</p>
-			<a href="#/" class="primary">Make a bouquet</a>
+			<a href="#/" class="btn-primary">Make a bouquet</a>
 		</section>
 	{:else}
-		<div class="reveal">
-			{#if phase === 'sealed' || phase === 'opening'}
-				<div class="env-stage">
-					<Envelope letter={gift.letter} open={phase === 'opening'} onclick={openEnvelope} />
-				</div>
-			{/if}
+		<div class="music-slot">
+			<GiftMusic {music} bind:handle={musicHandle} visible={musicOn} tone="night" />
+		</div>
 
-			{#if phase === 'blooming' || phase === 'letter'}
-				<div class="bloom">
+		{#if phase === 'sealed' || phase === 'opening'}
+			<div class="env-stage">
+				<p class="brand">Bloom.txt</p>
+				<Envelope letter={gift.letter} open={phase === 'opening'} onclick={openEnvelope} tone="night" />
+			</div>
+		{/if}
+
+		{#if phase === 'blooming' || phase === 'letter'}
+			<div class="bloom" class:with-letter={phase === 'letter'}>
+				<div class="bouquet-wrap">
+					<BloomCharms active={phase === 'blooming'} />
 					<BouquetStage
 						bind:handle={stage}
 						{flowers}
 						critters={gift.critters}
 						renderStyle={gift.style ?? DEFAULT_STYLE}
 						detail={gift.detail ?? DEFAULT_DETAIL}
+						{ribbon}
 						autoGrow={true}
 						note={gift.letter.note}
 						{ongrown}
 						onadvance={advance}
+						skin="ether"
 						hint={phase === 'blooming'
-							? 'Growing from the roots — drag to spin, tap or press space to skip ahead'
-							: 'Drag to spin, or replay the bloom from the roots'}
+							? 'Growing from the stems — drag to spin, tap or press space to skip ahead'
+							: 'Drag to spin, or replay the bloom from the stems'}
 					/>
-					<div class="actions">
-						<button type="button" class="ghost" onclick={replay}>Replay bloom</button>
-						<button type="button" class="ghost" onclick={copyText}>Copy as text</button>
-						<button type="button" class="ghost" onclick={savePng}>Download PNG</button>
-					</div>
-					{#if phase === 'letter'}
-						<LetterCard letter={gift.letter} />
-					{/if}
-					{#if status}
-						<p class="status" role="status">{status}</p>
-					{/if}
-					<p class="back">
-						<a href="#/">Make a bouquet of your own</a>
-					</p>
 				</div>
-			{/if}
-		</div>
+				{#if phase === 'letter'}
+					<div class="letter-slot">
+						<p class="for">
+							{letter?.to ? `For ${letter.to}` : 'A little bouquet'}
+						</p>
+						<LetterCard letter={gift.letter} tone="night" />
+					</div>
+				{/if}
+			</div>
+			<div class="bar">
+				<div class="actions">
+					<button type="button" class="btn-ghost night" onclick={replay}>Replay bloom</button>
+					<button type="button" class="btn-ghost night" onclick={copyText}>Copy as text</button>
+					<button type="button" class="btn-ghost night" onclick={savePng}>Download PNG</button>
+					<a href="#/" class="btn-primary back">Make one back</a>
+				</div>
+				{#if status}
+					<p class="status" role="status">{status}</p>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 </div>
 
 <style>
 	.page {
-		width: min(820px, calc(100% - 2rem));
-		margin: 0 auto;
-		padding: 2rem 0 4rem;
+		position: relative;
+		min-height: 100svh;
+		color: var(--moon);
+		overflow-x: hidden;
+		isolation: isolate;
 	}
-	header {
-		text-align: center;
-		margin-bottom: 1.4rem;
+	.music-slot {
+		position: fixed;
+		top: 1rem;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 8;
+		width: min(100% - 1.5rem, 36rem);
+		display: flex;
+		justify-content: center;
+		pointer-events: none;
 	}
-	.eyebrow {
+	.music-slot :global(.dock) {
+		pointer-events: auto;
+	}
+	.env-stage {
+		position: relative;
+		z-index: 2;
+		min-height: 100svh;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 5rem 1rem 3rem;
+	}
+	.brand {
+		position: absolute;
+		top: 1.4rem;
 		margin: 0;
-		font-size: 0.75rem;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
-		color: var(--ink-soft);
-		font-weight: 700;
+		font-family: var(--serif);
+		font-style: italic;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		color: var(--moon-soft);
+		font-size: 1.05rem;
 	}
-	h1,
-	h2 {
-		margin: 0.25rem 0 0;
+	.bloom {
+		position: relative;
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1.4rem;
+		width: min(860px, calc(100% - 2rem));
+		margin: 0 auto;
+		padding: 5.5rem 0 9rem;
+		min-height: 100svh;
+		animation: fade 0.9s var(--ease-out) both;
+	}
+	.bloom.with-letter {
+		width: min(860px, calc(100% - 2rem));
+	}
+	.bouquet-wrap {
+		position: relative;
+		width: 100%;
+	}
+	.bloom :global(figcaption) {
+		opacity: 0;
+		height: 0;
+		padding: 0;
+		overflow: hidden;
+		pointer-events: none;
+	}
+	.letter-slot {
+		position: relative;
+		z-index: 3;
+		width: 100%;
+	}
+	.for {
+		margin: 0 0 0.8rem;
 		font-family: var(--serif);
 		font-style: italic;
 		font-weight: 500;
-		color: var(--ink);
+		font-size: clamp(1.6rem, 4vw, 2.5rem);
+		color: var(--moon);
+		text-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 	}
-	h1 {
-		font-size: clamp(1.8rem, 5vw, 2.6rem);
+	.bar {
+		position: fixed;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 6;
+		padding: 1.6rem 1rem 1.15rem;
+		background: linear-gradient(180deg, transparent, rgba(7, 8, 15, 0.88) 42%);
+		pointer-events: none;
 	}
-	.env-stage {
-		display: flex;
-		justify-content: center;
-		min-height: 22rem;
-		align-items: center;
-	}
-	.bloom {
-		display: flex;
-		flex-direction: column;
-		gap: 0.9rem;
-		animation: fade 0.6s ease both;
+	.bar .actions,
+	.bar .status {
+		pointer-events: auto;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.45rem;
+		gap: 0.5rem;
 		justify-content: center;
 	}
-	.ghost,
-	.primary {
-		border-radius: 999px;
-		font: inherit;
-		font-weight: 700;
-		padding: 0.5rem 0.95rem;
-		cursor: pointer;
-		text-decoration: none;
-		display: inline-block;
+	:global(.btn-ghost.night) {
+		background: #16141c;
+		border-color: rgba(246, 239, 228, 0.18);
+		color: var(--moon);
 	}
-	.ghost {
-		border: 1px solid var(--line);
-		background: var(--card);
-		color: var(--ink);
-	}
-	.primary {
-		border: 0;
-		background: var(--rose);
-		color: #fffaf5;
-	}
-	.ghost:focus-visible,
-	.primary:focus-visible,
-	.back a:focus-visible {
-		outline: 2px solid var(--rose);
-		outline-offset: 2px;
-	}
-	.status {
-		margin: 0;
-		text-align: center;
-		color: var(--leaf);
-		font-size: 0.92rem;
+	:global(.btn-ghost.night:hover:not(:disabled)) {
+		border-color: rgba(246, 239, 228, 0.4);
 	}
 	.back {
-		text-align: center;
-		margin: 0.4rem 0 0;
+		background: var(--moon);
+		color: #2a2018;
+		box-shadow: 0 12px 28px -14px rgba(255, 230, 200, 0.8);
 	}
-	.back a {
-		color: var(--rose);
-		font-weight: 700;
+	.status {
+		margin: 0.45rem 0 0;
+		text-align: center;
+		color: var(--gold);
+		font-size: 0.92rem;
 	}
 	.wilted {
+		position: relative;
+		z-index: 2;
 		text-align: center;
-		background: var(--card);
-		border: 1px solid var(--line);
-		border-radius: 18px;
-		padding: 2rem 1.4rem;
+		max-width: 28rem;
+		margin: 0 auto;
+		padding: 8rem 1.4rem 4rem;
 	}
 	.sad {
 		margin: 0 auto 1rem;
 		font-family: var(--mono);
-		color: #6a8f70;
+		color: #9aae9c;
 		font-size: 0.9rem;
 		line-height: 1.2;
 	}
+	.wilted h2 {
+		margin: 0;
+		font-family: var(--serif);
+		font-style: italic;
+		font-weight: 500;
+		font-size: 2rem;
+	}
 	.wilted p {
-		color: var(--ink-soft);
-		max-width: 28rem;
+		color: var(--moon-soft);
 		margin: 0.6rem auto 1.2rem;
 	}
 	@keyframes fade {
 		from {
 			opacity: 0;
-			transform: translateY(8px);
+			transform: translateY(14px);
 		}
 		to {
 			opacity: 1;
 			transform: none;
+		}
+	}
+	@media (min-width: 1280px) {
+		.bloom.with-letter {
+			width: min(1280px, calc(100% - 2rem));
+			display: grid;
+			grid-template-columns: minmax(820px, 1fr) minmax(20rem, 26rem);
+			align-items: center;
+			gap: 2rem;
+		}
+	}
+	@media (max-width: 860px) {
+		.bloom,
+		.bloom.with-letter {
+			padding: 4.5rem 0 9.5rem;
+			min-height: auto;
+		}
+		.for {
+			text-align: center;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
